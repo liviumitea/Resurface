@@ -29,7 +29,7 @@ Personal content is not uploaded by this app. The image picker and image manipul
 
 ## Development
 
-Requirements: Node.js 24, npm, and a native iOS or Android toolchain. iOS builds require macOS/Xcode; Android builds require the Android SDK. Because SQLCipher and OCR are native modules, use a native development build rather than Expo Go.
+Requirements: Node.js 24, npm, and a native iOS or Android toolchain. iOS builds require macOS/Xcode; Android builds require the Android SDK. Because SQLCipher and OCR are native modules, use the included `expo-dev-client` native development build rather than Expo Go.
 
 ```sh
 npm ci
@@ -41,6 +41,8 @@ npm start
 ```
 
 `npm start` starts Metro for the development client. `npm run ios` / `npm run android` generates and builds the native project locally. To check JavaScript bundling without a native toolchain:
+
+If an iOS build succeeds but `simctl openurl` times out, let the simulator finish booting in Xcode's Device Hub, then start Metro with `npm start -- --localhost` and press `i` to open the installed development build. Rebuild with `npm run ios` after adding or changing a native dependency. A successful compile alone does not confirm the app opened.
 
 ```sh
 npx expo export --platform ios --output-dir /tmp/resurface-ios-export
