@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+dist/
+web-build/
+ios/
+android/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+RESURFACE_BUILD_PLAN.md

@@ -1,0 +1,525 @@
+import { Ionicons } from "@expo/vector-icons";
+import { StatusBar } from "expo-status-bar";
+import * as ImagePicker from "expo-image-picker";
+import * as Notifications from "expo-notifications";
+import { extractTextFromImage, isSupported as isOcrSupported } from "expo-text-extractor";
+import { useCallback, useEffect, useState } from "react";
+import {
+  Alert, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
+  StyleSheet, Switch, Text, TextInput, View,
+} from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { isValidInsight, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
+import { deletePickedImageFromCache, imageDataUri } from "./src/media";
+import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
+import {
+  countInsights, createInsight, deleteInsight, editInsight, getBetaMetrics, getDetail,
+  getEvent, getInsight, getSettings, getShownCount, listInsights, markCompleted, markOpened, markShown,
+  openStorage, respondToEvent, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
+} from "./src/storage";
+import { palette } from "./src/theme";
+import { Action, Body, BottomNav, Eyebrow, Header, IconButton, Screen, Surface, Title } from "./src/ui";
+
+type Route = "onboarding" | "capture" | "photo" | "saved" | "permission" | "today" | "reflect" | "library" | "detail" | "settings";
+type CaptureOrigin = "onboarding" | "today" | "library";
+
+function formatDate(value: string): string {
+  return new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+function InsightImage({ path, height = 260 }: { path: string | null; height?: number }) {
+  const [uri, setUri] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    imageDataUri(path).then((next) => { if (active) setUri(next); }).catch(() => { if (active) setUri(null); });
+    return () => { active = false; };
+  }, [path]);
+  if (!path) return null;
+  if (!uri) return <View style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="image-outline" size={28} color={palette.muted} /></View>;
+  return <Image source={{ uri }} resizeMode="contain" style={[screenStyles.image, { height }]} accessibilityLabel="Original saved image" />;
+}
+
+function InsightCard({ insight, compact = false }: { insight: Insight; compact?: boolean }) {
+  return (
+    <Surface style={compact ? screenStyles.compactCard : screenStyles.insightCard}>
+      <View style={screenStyles.cardMark}><Ionicons name="sparkles-outline" size={17} color={palette.accentDark} /></View>
+      {!!insight.content && <Text style={compact ? screenStyles.cardTextCompact : screenStyles.cardText}>{insight.content}</Text>}
+      <InsightImage path={insight.imagePath} height={compact ? 100 : 250} />
+      {!!insight.context && !compact && <Text style={screenStyles.context}>{insight.context}</Text>}
+      <Text style={screenStyles.savedDate}>Saved {formatDate(insight.createdAt)}</Text>
+    </Surface>
+  );
+}
+
+function Loading({ message = "Making space for what matters…" }: { message?: string }) {
+  return <Screen scroll={false}><View style={screenStyles.center}><View style={screenStyles.loadingMark}><Ionicons name="sparkles" size={34} color={palette.accentDark} /></View><Text style={screenStyles.loadingText}>{message}</Text></View></Screen>;
+}
+
+function ResurfaceApp() {
+  const [ready, setReady] = useState(false);
+  const [fatalError, setFatalError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [route, setRoute] = useState<Route>("onboarding");
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [insightCount, setInsightCount] = useState(0);
+  const [todayItems, setTodayItems] = useState<TodayItem[]>([]);
+  const [todayIndex, setTodayIndex] = useState(0);
+  const [libraryStatus, setLibraryStatus] = useState<InsightStatus>("active");
+  const [librarySearch, setLibrarySearch] = useState("");
+  const [libraryItems, setLibraryItems] = useState<Insight[]>([]);
+  const [detail, setDetail] = useState<InsightDetail | null>(null);
+  const [detailOrigin, setDetailOrigin] = useState<"today" | "library">("library");
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [editContext, setEditContext] = useState("");
+  const [captureOrigin, setCaptureOrigin] = useState<CaptureOrigin>("today");
+  const [captureContent, setCaptureContent] = useState("");
+  const [captureContext, setCaptureContext] = useState("");
+  const [captureImageUri, setCaptureImageUri] = useState<string | null>(null);
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const [firstSave, setFirstSave] = useState(false);
+  const [savedInsightId, setSavedInsightId] = useState<string | null>(null);
+  const [reflectionText, setReflectionText] = useState("");
+  const [feedbackEventId, setFeedbackEventId] = useState<string | null>(null);
+  const [pendingNextIndex, setPendingNextIndex] = useState(0);
+  const [metrics, setMetrics] = useState<{ saved: number; shown: number; answered: number; valuable: number } | null>(null);
+  const [notificationGranted, setNotificationGranted] = useState<boolean | null>(null);
+
+  const report = (error: unknown) => {
+    const message = error instanceof Error ? error.message : "Something went wrong. Please try again.";
+    Alert.alert("Resurface", message);
+  };
+
+  const goToday = useCallback(async (eventId?: string) => {
+    const items = await selectToday();
+    setTodayItems(items);
+    const requestedIndex = eventId ? items.findIndex((item) => item.event.id === eventId) : -1;
+    const firstIncomplete = items.findIndex((item) => !item.event.completedAt);
+    setTodayIndex(requestedIndex >= 0 ? requestedIndex : firstIncomplete >= 0 ? firstIncomplete : items.length);
+    setInsightCount(await countInsights());
+    setRoute("today");
+    return !eventId || requestedIndex >= 0;
+  }, []);
+
+  const goLibrary = useCallback(() => setRoute("library"), []);
+
+  const openDetail = useCallback(async (insightId: string, origin: "today" | "library" = "library") => {
+    const found = await getDetail(insightId);
+    if (!found) { await goToday(); return; }
+    setDetail(found);
+    setDetailOrigin(origin);
+    setEditing(false);
+    setEditContent(found.insight.content ?? "");
+    setEditContext(found.insight.context ?? "");
+    setRoute("detail");
+  }, [goToday]);
+
+  const handleNotification = useCallback(async (eventId: string) => {
+    const event = await getEvent(eventId);
+    const insight = event ? await getInsight(event.insightId) : null;
+    if (!event || event.cancelledAt || !insight || insight.status !== "active") { await goToday(); return; }
+    await markOpened(eventId);
+    if (!(await goToday(eventId))) {
+      await markShown(eventId);
+      await openDetail(insight.id, "today");
+    }
+  }, [goToday, openDetail]);
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        await openStorage();
+        const nextSettings = await getSettings();
+        if (!live) return;
+        setSettings(nextSettings);
+        setInsightCount(await countInsights());
+        if (nextSettings.onboardingComplete) await goToday();
+        else { setRoute("onboarding"); await track("onboarding_started"); }
+        await reconcileNotifications(nextSettings);
+        const last = await Notifications.getLastNotificationResponseAsync();
+        const eventId = last ? notificationEventId(last) : null;
+        if (eventId) {
+          await Notifications.clearLastNotificationResponseAsync();
+          await handleNotification(eventId);
+        }
+        if (live) setReady(true);
+      } catch (error) {
+        if (live) { setFatalError(error instanceof Error ? error.message : "The app could not start."); setReady(true); }
+      }
+    })();
+    const listener = Notifications.addNotificationResponseReceivedListener((response) => {
+      const eventId = notificationEventId(response);
+      if (eventId) void handleNotification(eventId).catch(report);
+    });
+    return () => { live = false; listener.remove(); };
+  }, [goToday, handleNotification]);
+
+  const current = todayItems[todayIndex];
+  useEffect(() => {
+    if (route !== "today" || !current || current.event.shownAt) return;
+    void markShown(current.event.id).then(async () => {
+      setTodayItems((items) => items.map((item) => item.event.id === current.event.id ? { ...item, event: { ...item.event, shownAt: new Date().toISOString() } } : item));
+      if (settings) await reconcileNotifications(settings);
+    }).catch(report);
+  }, [route, current?.event.id, current?.event.shownAt, settings]);
+
+  useEffect(() => {
+    if (route !== "library") return;
+    void listInsights(libraryStatus, librarySearch).then(setLibraryItems).catch(report);
+  }, [route, libraryStatus, librarySearch]);
+
+  const beginCapture = (origin: CaptureOrigin) => {
+    deletePickedImageFromCache(captureImageUri);
+    setCaptureOrigin(origin);
+    setCaptureContent("");
+    setCaptureContext("");
+    setCaptureImageUri(null);
+    setRoute("capture");
+  };
+
+  const pickImage = async (source: "camera" | "library") => {
+    try {
+      const options: ImagePicker.ImagePickerOptions = { mediaTypes: ["images"], quality: 1 };
+      const result = source === "camera"
+        ? await ImagePicker.launchCameraAsync(options)
+        : await ImagePicker.launchImageLibraryAsync(options);
+      if (!result.canceled && result.assets[0]) {
+        deletePickedImageFromCache(captureImageUri);
+        setCaptureImageUri(result.assets[0].uri);
+        setRoute("photo");
+      }
+    } catch {
+      Alert.alert("Photo unavailable", "Allow camera or photo access in your device settings, then try again.");
+    }
+  };
+
+  const extractPhotoText = async () => {
+    if (!captureImageUri) return;
+    if (!isOcrSupported) { Alert.alert("Text extraction unavailable", "You can still save the original photo."); return; }
+    setOcrBusy(true);
+    try {
+      const parts = await extractTextFromImage(captureImageUri);
+      const text = parts.join("\n").trim();
+      if (!text) { Alert.alert("We couldn't read this image", "Try another photo or keep this one as an image."); return; }
+      setCaptureContent(text);
+      setRoute("capture");
+    } catch {
+      Alert.alert("We couldn't read this image", "Your photo is still here. Try again or keep it as an image.");
+    } finally { setOcrBusy(false); }
+  };
+
+  const saveCapture = async () => {
+    if (!isValidInsight(captureContent, !!captureImageUri) || busy) return;
+    setBusy(true);
+    try {
+      const wasFirst = (await countInsights()) === 0;
+      const insight = await createInsight(captureContent, captureContext, captureImageUri);
+      deletePickedImageFromCache(captureImageUri);
+      setCaptureImageUri(null);
+      setSavedInsightId(insight.id);
+      setFirstSave(wasFirst);
+      if (wasFirst) {
+        const next = await saveSettings({ onboardingComplete: true });
+        setSettings(next);
+        await track("onboarding_completed");
+      }
+      setInsightCount(await countInsights());
+      setRoute("saved");
+      try { await reconcileNotifications(await getSettings()); }
+      catch (error) { report(error); }
+    } catch (error) { report(error); }
+    finally { setBusy(false); }
+  };
+
+  const finishSave = async () => {
+    if (firstSave && !settings?.permissionAsked) setRoute("permission");
+    else if (captureOrigin === "library") goLibrary();
+    else await goToday();
+  };
+
+  const finishPermission = async (ask: boolean) => {
+    try {
+      if (ask) setNotificationGranted(await requestNotificationPermission());
+      const next = await saveSettings({ permissionAsked: true });
+      setSettings(next);
+      await reconcileNotifications(next);
+      await goToday();
+    } catch (error) { report(error); await goToday(); }
+  };
+
+  const advanceToday = async () => {
+    if (!current) return;
+    await markShown(current.event.id);
+    await markCompleted(current.event.id);
+    setTodayItems((items) => items.map((item) => item.event.id === current.event.id ? { ...item, event: { ...item.event, completedAt: new Date().toISOString() } } : item));
+    const next = todayIndex + 1;
+    const shownCount = await getShownCount();
+    if (!current.event.valueFeedback && shouldAskValueFeedback(shownCount)) {
+      setFeedbackEventId(current.event.id);
+      setPendingNextIndex(next);
+    } else setTodayIndex(next);
+  };
+
+  const finishFeedback = async (value?: "yes" | "not_really") => {
+    try { if (value && feedbackEventId) await saveValueFeedback(feedbackEventId, value); }
+    catch (error) { report(error); }
+    setFeedbackEventId(null);
+    setTodayIndex(pendingNextIndex);
+  };
+
+  const finishReflection = async (response: "yes" | "not_now" | "not_anymore") => {
+    if (!current) return;
+    const commit = async () => {
+      try {
+        await markShown(current.event.id);
+        await respondToEvent(current.event.id, response, response === "yes" ? reflectionText : undefined);
+        if (settings) await reconcileNotifications(settings);
+        setReflectionText("");
+        setRoute("today");
+        await advanceToday();
+      } catch (error) { report(error); }
+    };
+    if (response === "not_anymore") {
+      Alert.alert("Archive this insight?", "It won't resurface again, but you can restore it from Library.", [
+        { text: "Cancel", style: "cancel" }, { text: "Archive", onPress: () => { void commit(); } },
+      ]);
+    } else await commit();
+  };
+
+  const updateStatus = async (status: InsightStatus) => {
+    if (!detail || !settings) return;
+    try {
+      await setInsightStatus(detail.insight.id, status);
+      await reconcileNotifications(settings);
+      await openDetail(detail.insight.id, detailOrigin);
+    } catch (error) { report(error); }
+  };
+
+  const saveEdit = async () => {
+    if (!detail || !isValidInsight(editContent, !!detail.insight.imagePath)) return;
+    try {
+      await editInsight(detail.insight.id, editContent, editContext);
+      setEditing(false);
+      await openDetail(detail.insight.id, detailOrigin);
+      if (settings) await reconcileNotifications(settings);
+    } catch (error) { report(error); }
+  };
+
+  const confirmDelete = () => {
+    if (!detail) return;
+    const insightId = detail.insight.id;
+    Alert.alert("Delete this insight permanently?", "The insight, original photo, reflections and resurfacing history will be removed from this device.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: () => {
+        void (async () => {
+          try {
+            await deleteInsight(insightId);
+            if (settings) await reconcileNotifications(settings);
+            if (detailOrigin === "library") goLibrary(); else await goToday();
+          } catch (error) { report(error); }
+        })();
+      } },
+    ]);
+  };
+
+  const updateSettings = async (patch: Partial<Settings>) => {
+    try {
+      const next = await saveSettings(patch);
+      setSettings(next);
+      await reconcileNotifications(next);
+    } catch (error) { report(error); }
+  };
+
+  const enableNotifications = async () => {
+    try {
+      const granted = await requestNotificationPermission();
+      setNotificationGranted(granted);
+      if (granted) await reconcileNotifications(await getSettings());
+      else Alert.alert("Notifications are off", "You can enable Resurface notifications in your device settings.");
+    } catch (error) { report(error); }
+  };
+
+  if (!ready) return <Loading />;
+  if (fatalError) return <Screen><Eyebrow>Unable to open</Eyebrow><Title>Your insights are still protected.</Title><Body>{fatalError}</Body><View style={screenStyles.gap24}><Body muted>Resurface will not reset an encrypted database when its key is unavailable.</Body></View></Screen>;
+  if (!settings) return <Loading />;
+
+  const onboarding = [
+    { icon: "book-outline" as const, title: "You already know more than you remember.", body: "Save the insights, lessons and ideas you don't want to lose." },
+    { icon: "time-outline" as const, title: "Resurface brings them back.", body: "Instead of disappearing into an archive, the things you save return over time." },
+    { icon: "leaf-outline" as const, title: "So they have another chance to matter.", body: "You decide what's worth remembering. Resurface helps keep it accessible." },
+  ];
+  const slide = onboarding[Math.min(settings.onboardingStep, 2)] ?? onboarding[0]!;
+
+  return <>
+    <StatusBar style="dark" />
+    {route === "onboarding" && <Screen scroll={false}>
+      <View style={screenStyles.onboarding}>
+        <View><Text style={screenStyles.brand}>resurface<Text style={screenStyles.brandDot}>.</Text></Text><Text style={screenStyles.step}>0{Math.min(settings.onboardingStep + 1, 3)} / 03</Text></View>
+        <View style={screenStyles.onboardingHero}>
+          <View style={screenStyles.heroCircle}><Ionicons name={slide.icon} size={72} color={palette.accentDark} /></View>
+          <Eyebrow>A little more accessible</Eyebrow><Title>{slide.title}</Title><Body muted>{slide.body}</Body>
+        </View>
+        <View style={screenStyles.onboardingFooter}>
+          <View style={screenStyles.dots}>{onboarding.map((_, index) => <View key={index} style={[screenStyles.dot, settings.onboardingStep === index && screenStyles.activeDot]} />)}</View>
+          <Action label={settings.onboardingStep === 2 ? "Save my first insight" : "Continue"} icon="arrow-forward" onPress={() => {
+            if (settings.onboardingStep === 2) beginCapture("onboarding");
+            else void updateSettings({ onboardingStep: settings.onboardingStep + 1 });
+          }} />
+        </View>
+      </View>
+    </Screen>}
+
+    {route === "capture" && <Screen>
+      <Header title="Save an insight" back={() => { deletePickedImageFromCache(captureImageUri); setCaptureImageUri(null); if (captureOrigin === "onboarding") setRoute("onboarding"); else if (captureOrigin === "library") goLibrary(); else void goToday(); }} />
+      <Eyebrow>Capture</Eyebrow><Title>What do you want to remember?</Title>
+      <TextInput autoFocus multiline textAlignVertical="top" placeholder="A thought, lesson, or idea that matters to you…" placeholderTextColor={palette.muted} value={captureContent} onChangeText={setCaptureContent} style={screenStyles.captureInput} accessibilityLabel="Insight text" />
+      {captureImageUri && <View style={screenStyles.attached}><Ionicons name="image-outline" size={18} color={palette.accentDark} /><Text style={screenStyles.attachedText}>Original photo attached</Text><IconButton icon="close" label="Remove photo" onPress={() => { deletePickedImageFromCache(captureImageUri); setCaptureImageUri(null); }} /></View>}
+      <Text style={screenStyles.fieldLabel}>Why does this matter to you? <Text style={screenStyles.optional}>Optional</Text></Text>
+      <TextInput multiline textAlignVertical="top" placeholder="Add a little context, if you'd like…" placeholderTextColor={palette.muted} value={captureContext} onChangeText={setCaptureContext} style={screenStyles.contextInput} accessibilityLabel="Optional context" />
+      <View style={screenStyles.row}><View style={screenStyles.flex}><Action kind="secondary" icon="camera-outline" label="Take photo" onPress={() => { void pickImage("camera"); }} /></View><View style={screenStyles.flex}><Action kind="secondary" icon="images-outline" label="Choose photo" onPress={() => { void pickImage("library"); }} /></View></View>
+      <View style={screenStyles.gap24}><Action label={busy ? "Saving…" : "Save insight"} icon="bookmark-outline" disabled={busy || !isValidInsight(captureContent, !!captureImageUri)} onPress={() => { void saveCapture(); }} /></View>
+      <Text style={screenStyles.privacyNote}>Your words and photos stay on this device.</Text>
+    </Screen>}
+
+    {route === "photo" && <Screen>
+      <Header title="Your photo" back={() => setRoute("capture")} />
+      <Eyebrow>Photo capture</Eyebrow><Title>Keep what matters.</Title>
+      {captureImageUri && <Image source={{ uri: captureImageUri }} resizeMode="contain" style={screenStyles.photoPreview} />}
+      <Body muted>Save the photo as it is, or turn the visible text into something you can edit. The original stays attached.</Body>
+      <View style={screenStyles.gap24}><Action label="Keep as image" icon="image-outline" onPress={() => { setCaptureContent(""); setRoute("capture"); }} /></View>
+      <View style={screenStyles.gap12}><Action kind="secondary" label={ocrBusy ? "Extracting text…" : "Extract text"} icon="text-outline" disabled={ocrBusy} onPress={() => { void extractPhotoText(); }} /></View>
+      <View style={screenStyles.gap12}><Action kind="ghost" label="Choose another photo" onPress={() => { void pickImage("library"); }} /></View>
+    </Screen>}
+
+    {route === "saved" && <Screen scroll={false}>
+      <View style={screenStyles.centerPanel}><View style={screenStyles.successIcon}><Ionicons name="checkmark" size={38} color={palette.accentDark} /></View><Eyebrow>Safely saved</Eyebrow><Title>{firstSave ? "Your first insight is saved." : "Saved."}</Title><Body muted>We'll bring it back after some time has passed.</Body></View>
+      <View style={screenStyles.bottomActions}><Action label="Continue" onPress={() => { void finishSave(); }} /><View style={screenStyles.gap12}><Action kind="ghost" label="View insight" onPress={() => { if (savedInsightId) void openDetail(savedInsightId, "today"); }} /></View></View>
+    </Screen>}
+
+    {route === "permission" && <Screen scroll={false}>
+      <View style={screenStyles.centerPanel}><View style={screenStyles.successIcon}><Ionicons name="notifications-outline" size={38} color={palette.accentDark} /></View><Eyebrow>A gentle reminder</Eyebrow><Title>Let Resurface bring it back.</Title><Body muted>Notifications allow the things you've saved to find their way back to you. You can change this later.</Body></View>
+      <View style={screenStyles.bottomActions}><Action label="Enable notifications" onPress={() => { void finishPermission(true); }} /><View style={screenStyles.gap12}><Action kind="ghost" label="Not now" onPress={() => { void finishPermission(false); }} /></View></View>
+    </Screen>}
+
+    {route === "today" && <Screen scroll={false}>
+      <Header title="resurface." right={<IconButton icon="settings-outline" label="Settings" onPress={() => { void getBetaMetrics().then(setMetrics).catch(report); void Notifications.getPermissionsAsync().then((permission) => setNotificationGranted(permission.granted)).catch(report); setRoute("settings"); }} />} />
+      <ScrollView contentContainerStyle={screenStyles.todayContent}>
+        <Eyebrow>{new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</Eyebrow>
+        <Title>Today</Title>
+        {todayItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name={insightCount === 0 ? "bookmark-outline" : "sunny-outline"} size={36} color={palette.accentDark} /><Text style={screenStyles.emptyTitle}>{insightCount === 0 ? "Nothing here yet." : "Nothing to resurface today."}</Text><Body muted>{insightCount === 0 ? "Save something you don't want to lose." : "Some things are better remembered after a little time has passed."}</Body><View style={screenStyles.gap24}><Action label={insightCount === 0 ? "Save your first insight" : "Save something"} onPress={() => beginCapture("today")} /></View></Surface>
+          : todayIndex >= todayItems.length ? <Surface style={screenStyles.emptyCard}><Ionicons name="checkmark-circle-outline" size={38} color={palette.accentDark} /><Text style={screenStyles.emptyTitle}>That's all for today.</Text><Body muted>We'll bring more back when the time is right.</Body><View style={screenStyles.gap24}><Action kind="secondary" label="Save something" onPress={() => beginCapture("today")} /></View></Surface>
+          : current && <>
+            <Text style={screenStyles.subtitle}>{todayItems.length} {todayItems.length === 1 ? "thing" : "things"} worth remembering</Text>
+            <Text style={screenStyles.counter}>{todayIndex + 1} of {todayItems.length}</Text>
+            <InsightCard insight={current.insight} />
+            <View style={screenStyles.gap24}><Action label="Reflect" icon="chatbubble-ellipses-outline" onPress={() => { setReflectionText(""); setRoute("reflect"); }} /></View>
+            <View style={screenStyles.gap12}><Action kind="secondary" label="Next" icon="arrow-forward" onPress={() => { void advanceToday(); }} /></View>
+            <Pressable accessibilityRole="button" onPress={() => { void openDetail(current.insight.id, "today"); }}><Text style={screenStyles.textLink}>View insight and history</Text></Pressable>
+          </>}
+      </ScrollView>
+      <BottomNav active="today" onToday={() => { void goToday(); }} onCapture={() => beginCapture("today")} onLibrary={goLibrary} />
+    </Screen>}
+
+    {route === "reflect" && current && <Screen>
+      <Header title="Reflect" back={() => setRoute("today")} />
+      <Eyebrow>A moment to check in</Eyebrow><InsightCard insight={current.insight} compact />
+      <View style={screenStyles.gap24}><Title>Does this still resonate?</Title></View>
+      <TextInput multiline textAlignVertical="top" placeholder="Anything you want to add? (optional)" placeholderTextColor={palette.muted} value={reflectionText} onChangeText={setReflectionText} style={screenStyles.contextInput} accessibilityLabel="Optional reflection" />
+      <View style={screenStyles.gap24}><Action label="Yes, it does" onPress={() => { void finishReflection("yes"); }} /></View>
+      <View style={screenStyles.gap12}><Action kind="secondary" label="Not right now · Pause" onPress={() => { void finishReflection("not_now"); }} /></View>
+      <View style={screenStyles.gap12}><Action kind="ghost" label="Not anymore · Archive" onPress={() => { void finishReflection("not_anymore"); }} /></View>
+    </Screen>}
+
+    {route === "library" && <Screen scroll={false}>
+      <Header title="Library" />
+      <View style={screenStyles.libraryTop}><Eyebrow>What you've saved</Eyebrow><Title>Your insights</Title><TextInput placeholder="Search content or context" placeholderTextColor={palette.muted} value={librarySearch} onChangeText={setLibrarySearch} style={screenStyles.search} accessibilityLabel="Search insights" /></View>
+      <View style={screenStyles.filters}>{(["active", "paused", "archived"] as InsightStatus[]).map((status) => <Pressable key={status} onPress={() => setLibraryStatus(status)} style={[screenStyles.filter, libraryStatus === status && screenStyles.selectedFilter]}><Text style={[screenStyles.filterText, libraryStatus === status && screenStyles.selectedFilterText]}>{status[0]!.toUpperCase() + status.slice(1)}</Text></Pressable>)}</View>
+      <ScrollView contentContainerStyle={screenStyles.libraryList} keyboardShouldPersistTaps="handled">
+        {libraryItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="albums-outline" size={36} color={palette.accentDark} /><Text style={screenStyles.emptyTitle}>{librarySearch ? "No matching insights." : `No ${libraryStatus} insights.`}</Text><Body muted>What you save will be here whenever you need it.</Body></Surface>
+          : libraryItems.map((insight) => <Pressable key={insight.id} accessibilityRole="button" onPress={() => { void openDetail(insight.id); }} style={screenStyles.libraryRow}><View style={screenStyles.libraryIcon}><Ionicons name={insight.imagePath ? "image-outline" : "bookmark-outline"} size={19} color={palette.accentDark} /></View><View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{insight.content || "Saved photo"}</Text><Text style={screenStyles.libraryDate}>{formatDate(insight.createdAt)}</Text></View><Ionicons name="chevron-forward" size={17} color={palette.muted} /></Pressable>)}
+      </ScrollView>
+      <BottomNav active="library" onToday={() => { void goToday(); }} onCapture={() => beginCapture("library")} onLibrary={goLibrary} />
+    </Screen>}
+
+    {route === "detail" && detail && <Screen>
+      <Header title="Insight" back={() => { if (detailOrigin === "library") goLibrary(); else if (firstSave && !settings.permissionAsked) setRoute("permission"); else void goToday(); }} />
+      <Eyebrow>{detail.insight.status} · saved {formatDate(detail.insight.createdAt)}</Eyebrow>
+      {editing ? <>
+        <Title>Edit insight</Title>
+        <TextInput multiline textAlignVertical="top" value={editContent} onChangeText={setEditContent} placeholder="What do you want to remember?" style={screenStyles.captureInput} accessibilityLabel="Edit insight text" />
+        <Text style={screenStyles.fieldLabel}>Context</Text><TextInput multiline textAlignVertical="top" value={editContext} onChangeText={setEditContext} style={screenStyles.contextInput} accessibilityLabel="Edit context" />
+        <View style={screenStyles.gap24}><Action label="Save changes" disabled={!isValidInsight(editContent, !!detail.insight.imagePath)} onPress={() => { void saveEdit(); }} /></View>
+        <View style={screenStyles.gap12}><Action kind="ghost" label="Cancel" onPress={() => setEditing(false)} /></View>
+      </> : <>
+        <InsightCard insight={detail.insight} />
+        <View style={screenStyles.gap24}><Action kind="secondary" label="Edit" icon="create-outline" onPress={() => setEditing(true)} /></View>
+        <View style={screenStyles.gap12}>{detail.insight.status === "active" ? <Action kind="ghost" label="Pause resurfacing" onPress={() => { void updateStatus("paused"); }} /> : <Action kind="secondary" label={detail.insight.status === "paused" ? "Resume resurfacing" : "Restore insight"} onPress={() => { void updateStatus("active"); }} />}</View>
+        {detail.insight.status !== "archived" && <View style={screenStyles.gap12}><Action kind="ghost" label="Archive" onPress={() => { Alert.alert("Archive this insight?", "You can restore it from Library later.", [{ text: "Cancel", style: "cancel" }, { text: "Archive", onPress: () => { void updateStatus("archived"); } }]); }} /></View>}
+        <View style={screenStyles.gap12}><Action kind="danger" label="Delete permanently" onPress={confirmDelete} /></View>
+        <View style={screenStyles.gap24}><Text style={screenStyles.sectionTitle}>Resurfacing history</Text></View>
+        {detail.events.filter((event) => !!event.shownAt).length === 0 ? <Body muted>We'll bring this back after some time has passed.</Body> : detail.events.filter((event) => !!event.shownAt).map((event) => <View key={event.id} style={screenStyles.historyRow}><View style={screenStyles.historyDot} /><View style={screenStyles.flex}><Text style={screenStyles.historyDate}>{formatDate(event.shownAt!)}</Text><Text style={screenStyles.historyMeta}>{event.response === "yes" ? "Still relevant" : event.response === "not_now" ? "Paused" : event.response === "not_anymore" ? "Archived" : "Seen"}</Text>{detail.reflections.filter((reflection) => reflection.eventId === event.id).map((reflection) => <Text key={reflection.id} style={screenStyles.reflectionText}>{reflection.content}</Text>)}</View></View>)}
+      </>}
+    </Screen>}
+
+    {route === "settings" && <Screen>
+      <Header title="Settings" back={() => { void goToday(); }} />
+      <Eyebrow>Make it yours</Eyebrow><Title>A gentler rhythm.</Title>
+      <Text style={screenStyles.sectionTitle}>Resurfacing frequency</Text><Body muted>Maximum number of insights Today can show in one day.</Body>
+      <View style={screenStyles.frequency}>{([1, 3, 5] as const).map((cap) => <Pressable key={cap} onPress={() => { void updateSettings({ dailyCap: cap }); }} style={[screenStyles.frequencyOption, settings.dailyCap === cap && screenStyles.frequencySelected]}><Text style={screenStyles.frequencyName}>{cap === 1 ? "Light" : cap === 3 ? "Standard" : "More"}</Text><Text style={screenStyles.frequencyDetail}>Up to {cap}/day</Text></Pressable>)}</View>
+      <View style={screenStyles.gap24}><Text style={screenStyles.sectionTitle}>Notifications</Text><Body muted>One approximate notification window per day. Today still works if notifications are off.</Body></View>
+      {notificationGranted === false && <View style={screenStyles.gap12}><Action kind="secondary" label="Enable notifications" onPress={() => { void enableNotifications(); }} /></View>}
+      <Text style={screenStyles.fieldLabel}>Preferred time (24-hour HH:MM)</Text>
+      <TextInput value={settings.notificationTime} onChangeText={(value) => { setSettings({ ...settings, notificationTime: value }); }} onBlur={() => { if (/^([01]\d|2[0-3]):[0-5]\d$/.test(settings.notificationTime)) void updateSettings({ notificationTime: settings.notificationTime }); else { Alert.alert("Use HH:MM", "Enter a time such as 09:00 or 18:30."); void getSettings().then(setSettings); } }} keyboardType="numbers-and-punctuation" maxLength={5} style={screenStyles.search} accessibilityLabel="Notification time" />
+      <Surface style={screenStyles.switchRow}><View style={screenStyles.flex}><Text style={screenStyles.switchTitle}>Show insight text</Text><Text style={screenStyles.switchDescription}>Personal words may appear on your lock screen.</Text></View><Switch value={settings.showInsightText} onValueChange={(value) => { void updateSettings({ showInsightText: value }); }} trackColor={{ true: palette.accentDark }} /></Surface>
+      <View style={screenStyles.gap24}><Text style={screenStyles.sectionTitle}>Privacy & data</Text><Body muted>Insights, photos, reflections, and history are encrypted and kept on this device. There is no account or cloud backup yet. Removing the app or losing this device may lose your insights.</Body></View>
+      <View style={screenStyles.gap24}><Text style={screenStyles.sectionTitle}>Beta signals on this device</Text><Body muted>{metrics ? `${metrics.saved} saved · ${metrics.shown} shown · ${metrics.answered} value answers · ${metrics.valuable} marked worthwhile` : "Loading…"}</Body><Body muted>{metrics?.shown ? `${Math.round((metrics.answered / metrics.shown) * 100)}% of shown insights received a value answer.` : "Answer rate appears after the first resurfacing."}</Body><Body muted>{metrics?.answered ? `${Math.round((metrics.valuable / metrics.answered) * 100)}% of answers said a resurfacing was worthwhile.` : "Value rate appears after you answer a feedback question."}</Body></View>
+      <View style={screenStyles.gap24}><Body muted>Resurface 0.1.0 · Device-only beta</Body></View>
+    </Screen>}
+
+    <Modal visible={!!feedbackEventId} transparent animationType="fade" onRequestClose={() => { void finishFeedback(); }}>
+      <View style={screenStyles.modalBackdrop}><Surface style={screenStyles.feedbackBox}><Eyebrow>A quick check-in</Eyebrow><Text style={screenStyles.feedbackTitle}>Was this worth resurfacing today?</Text><Body muted>Your answer helps us understand whether this is useful. It stays on this device.</Body><View style={screenStyles.gap24}><Action label="Yes" onPress={() => { void finishFeedback("yes"); }} /></View><View style={screenStyles.gap12}><Action kind="secondary" label="Not really" onPress={() => { void finishFeedback("not_really"); }} /></View><View style={screenStyles.gap12}><Action kind="ghost" label="Skip" onPress={() => { void finishFeedback(); }} /></View></Surface></View>
+    </Modal>
+  </>;
+}
+
+export default function App() {
+  return <SafeAreaProvider><ResurfaceApp /></SafeAreaProvider>;
+}
+
+const screenStyles = StyleSheet.create({
+  flex: { flex: 1 }, row: { flexDirection: "row", gap: 10 }, gap12: { marginTop: 12 }, gap24: { marginTop: 24 },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 28 },
+  loadingMark: { width: 90, height: 90, borderRadius: 30, backgroundColor: palette.accent, alignItems: "center", justifyContent: "center" },
+  loadingText: { color: palette.muted, marginTop: 24, fontSize: 16 },
+  brand: { fontSize: 25, fontWeight: "800", color: palette.ink, letterSpacing: -1 }, brandDot: { color: palette.accentDark },
+  step: { color: palette.muted, marginTop: 8, fontSize: 12, fontWeight: "700", letterSpacing: 2 },
+  onboarding: { flex: 1, paddingHorizontal: 26, paddingTop: 22, paddingBottom: 26, justifyContent: "space-between" },
+  onboardingHero: { paddingBottom: 16 }, heroCircle: { height: 164, width: 164, borderRadius: 82, backgroundColor: palette.accent, alignItems: "center", justifyContent: "center", marginBottom: 28 },
+  onboardingFooter: { gap: 26 }, dots: { flexDirection: "row", gap: 8 }, dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: palette.border }, activeDot: { width: 28, backgroundColor: palette.accentDark },
+  captureInput: { minHeight: 170, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.border, borderRadius: 22, padding: 18, color: palette.ink, fontSize: 18, lineHeight: 26 },
+  contextInput: { minHeight: 96, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.border, borderRadius: 18, padding: 16, color: palette.ink, fontSize: 15, lineHeight: 23 },
+  fieldLabel: { color: palette.ink, fontSize: 14, fontWeight: "700", marginTop: 24, marginBottom: 9 }, optional: { color: palette.muted, fontWeight: "400" },
+  attached: { marginTop: 12, paddingLeft: 12, borderRadius: 14, backgroundColor: palette.soft, flexDirection: "row", alignItems: "center", gap: 8 }, attachedText: { color: palette.accentDark, fontSize: 13, fontWeight: "700", flex: 1 },
+  privacyNote: { color: palette.muted, fontSize: 12, textAlign: "center", marginTop: 18 },
+  photoPreview: { width: "100%", height: 300, backgroundColor: palette.soft, borderRadius: 20, marginVertical: 24 },
+  centerPanel: { flex: 1, justifyContent: "center", paddingHorizontal: 28 }, bottomActions: { paddingHorizontal: 24, paddingBottom: 32 },
+  successIcon: { width: 84, height: 84, borderRadius: 28, backgroundColor: palette.accent, alignItems: "center", justifyContent: "center", marginBottom: 14 },
+  todayContent: { paddingHorizontal: 24, paddingBottom: 34 }, subtitle: { color: palette.muted, fontSize: 16, marginBottom: 20 }, counter: { color: palette.accentDark, fontSize: 12, fontWeight: "800", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10 },
+  insightCard: { minHeight: 260, justifyContent: "space-between" }, compactCard: { minHeight: 0 },
+  cardMark: { width: 32, height: 32, borderRadius: 11, backgroundColor: palette.soft, alignItems: "center", justifyContent: "center", marginBottom: 19 },
+  cardText: { color: palette.ink, fontSize: 25, lineHeight: 35, fontWeight: "600", letterSpacing: -0.6 }, cardTextCompact: { color: palette.ink, fontSize: 20, lineHeight: 29, fontWeight: "600" },
+  savedDate: { color: palette.muted, fontSize: 12, marginTop: 22 }, context: { color: palette.muted, fontSize: 15, lineHeight: 23, marginTop: 18 },
+  image: { width: "100%", marginTop: 18, borderRadius: 12 }, imagePlaceholder: { width: "100%", marginTop: 18, backgroundColor: palette.soft, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  emptyCard: { alignItems: "flex-start", marginTop: 18, gap: 12 }, emptyTitle: { color: palette.ink, fontSize: 22, fontWeight: "700", marginTop: 12 },
+  textLink: { color: palette.accentDark, fontWeight: "700", textAlign: "center", padding: 20 },
+  libraryTop: { paddingHorizontal: 24 }, search: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.border, borderRadius: 15, height: 50, paddingHorizontal: 14, color: palette.ink, marginTop: 8 },
+  filters: { paddingHorizontal: 24, flexDirection: "row", gap: 8, paddingVertical: 16 }, filter: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 12, backgroundColor: palette.soft }, selectedFilter: { backgroundColor: palette.dark }, filterText: { color: palette.muted, fontWeight: "700", fontSize: 13 }, selectedFilterText: { color: palette.paper },
+  libraryList: { paddingHorizontal: 24, paddingBottom: 40 }, libraryRow: { backgroundColor: palette.paper, borderColor: palette.border, borderWidth: 1, padding: 16, borderRadius: 18, marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 14 },
+  libraryIcon: { width: 40, height: 40, borderRadius: 13, backgroundColor: palette.soft, alignItems: "center", justifyContent: "center" }, libraryText: { color: palette.ink, fontSize: 15, lineHeight: 21, fontWeight: "600" }, libraryDate: { color: palette.muted, fontSize: 12, marginTop: 5 },
+  sectionTitle: { color: palette.ink, fontSize: 18, fontWeight: "700", marginBottom: 9 },
+  historyRow: { flexDirection: "row", gap: 14, borderLeftWidth: 1, borderLeftColor: palette.border, paddingLeft: 18, paddingBottom: 20, marginLeft: 7 }, historyDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: palette.accentDark, marginLeft: -23 }, historyDate: { color: palette.ink, fontWeight: "700" }, historyMeta: { color: palette.muted, marginTop: 4 }, reflectionText: { color: palette.ink, marginTop: 10, lineHeight: 22 },
+  frequency: { flexDirection: "row", gap: 8, marginTop: 16 }, frequencyOption: { flex: 1, padding: 12, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.border, borderRadius: 15 }, frequencySelected: { borderColor: palette.accentDark, backgroundColor: palette.soft }, frequencyName: { color: palette.ink, fontWeight: "700", fontSize: 13 }, frequencyDetail: { color: palette.muted, fontSize: 11, marginTop: 5 },
+  switchRow: { flexDirection: "row", alignItems: "center", gap: 14, marginTop: 16 }, switchTitle: { color: palette.ink, fontWeight: "700", fontSize: 15 }, switchDescription: { color: palette.muted, fontSize: 12, lineHeight: 18, marginTop: 3 },
+  modalBackdrop: { flex: 1, backgroundColor: "#14221ACC", justifyContent: "center", padding: 24 }, feedbackBox: { padding: 24 }, feedbackTitle: { color: palette.ink, fontSize: 26, lineHeight: 33, fontWeight: "700", marginBottom: 10 },
+});

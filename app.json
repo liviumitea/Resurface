@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "Resurface",
+    "slug": "resurface",
+    "scheme": "resurface",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "app.resurface.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Take photos of things you want to remember.",
+        "NSPhotoLibraryUsageDescription": "Choose photos of things you want to remember."
+      }
+    },
+    "android": {
+      "package": "app.resurface.mobile",
+      "permissions": [
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-sqlite",
+        {
+          "useSQLCipher": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose photos of things you want to remember.",
+          "cameraPermission": "Take photos of things you want to remember."
+        }
+      ],
+      "expo-notifications",
+      "expo-secure-store",
+      "expo-font"
+    ],
+    "experiments": {
+      "tsconfigPaths": true
+    }
+  }
+}
