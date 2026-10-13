@@ -36,7 +36,15 @@
       ],
       "expo-notifications",
       "expo-secure-store",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "enableSceneSupport": true
+          }
+        }
+      ]
     ],
     "experiments": {
       "tsconfigPaths": true

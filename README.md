@@ -31,6 +31,8 @@ Personal content is not uploaded by this app. The image picker and image manipul
 
 Requirements: Node.js 24, npm, and a native iOS or Android toolchain. iOS builds require macOS/Xcode; Android builds require the Android SDK. Because SQLCipher and OCR are native modules, use the included `expo-dev-client` native development build rather than Expo Go.
 
+For Xcode 27 / iOS 27, the project opts into Expo SDK 57's UIKit scene lifecycle through `expo-build-properties`. After pulling a change to native dependencies or config, regenerate the ignored `ios/` project before rebuilding. Preserve any manual native changes first; `npx expo prebuild --clean --platform ios` removes and recreates that directory. Use a checkout path without spaces for local iOS builds; an Expo-generated Xcode script currently mishandles paths containing spaces.
+
 ```sh
 npm ci
 npm run typecheck
