@@ -9,7 +9,7 @@ const KNOWN_EVENTS = new Set([
   "insight_created", "insight_created_text", "insight_created_photo", "insight_created_ocr",
   "resurface_selected", "resurface_shown", "notification_opened", "notification_scheduled",
   "reflection_added", "still_relevant", "insight_paused", "insight_archived", "insight_resumed",
-  "insight_restored", "insight_deleted", "resurface_value_feedback_asked", "resurface_value_feedback",
+  "insight_restored", "insight_snoozed", "insight_deleted", "resurface_value_feedback_asked", "resurface_value_feedback",
   "backup_created", "backup_restored", "onboarding_started", "onboarding_completed",
 ]);
 

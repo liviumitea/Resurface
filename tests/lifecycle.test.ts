@@ -258,3 +258,57 @@ test("notification plans: at most 30, one per local day, never before due, gener
   const personal = planNotifications(candidates.slice(0, 1), { notificationTime: "09:00", showInsightText: true }, clock);
   assert.equal(personal[0]!.body, "x".repeat(140));
 });
+
+test("snoozing keeps one pending event at the same stage, due at the chosen time, with no response", async () => {
+  const h = harness(local(2026, 10, 1));
+  try {
+    await h.store.insertInsight("insight-a", "Snooze me", null, null);
+    h.setClock(local(2026, 10, 2, 10));
+    const [item] = await h.store.selectToday();
+    await h.store.markShown(item!.event.id);
+    const [beforeSnooze] = h.pending("insight-a");
+    assert.equal(beforeSnooze!.stage, 1);
+
+    const until = local(2026, 11, 2, 10);
+    assert.equal(await h.store.snoozeInsight("insight-a", until), true);
+    const pending = h.pending("insight-a");
+    assert.equal(pending.length, 1, "exactly one pending event");
+    assert.equal(pending[0]!.stage, 1, "the stage is unchanged");
+    assert.equal(pending[0]!.scheduledAt, until.toISOString());
+    const history = h.events("insight-a");
+    assert.ok(history.some((event) => event.id === beforeSnooze!.id && event.cancelledAt), "the replaced event stays in history");
+    assert.ok(history.every((event) => event.response === null), "a snooze is not a response");
+    assert.equal((await h.store.getDetail("insight-a"))!.insight.status, "active");
+
+    h.setClock(local(2026, 11, 2, 9, 59));
+    assert.deepEqual(await h.store.selectToday(), [], "not due before the snooze ends");
+    assert.deepEqual((await h.store.notificationCandidates()).map((candidate) => candidate.id), [pending[0]!.id], "reminders follow the new date");
+    h.setClock(local(2026, 11, 2, 10));
+    assert.deepEqual((await h.store.selectToday()).map((today) => today.event.id), [pending[0]!.id]);
+  } finally { h.close(); }
+});
+
+test("snoozing removes an insight from today's selection", async () => {
+  const h = harness(local(2026, 10, 1));
+  try {
+    await h.store.insertInsight("insight-a", "Selected today", null, null);
+    h.setClock(local(2026, 10, 2, 10));
+    assert.equal((await h.store.selectToday()).length, 1);
+    await h.store.snoozeInsight("insight-a", local(2026, 10, 9, 10));
+    assert.deepEqual(await h.store.selectToday(), []);
+  } finally { h.close(); }
+});
+
+test("snoozing an inactive insight, or to a time in the past, does nothing", async () => {
+  const h = harness(local(2026, 10, 1));
+  try {
+    await h.store.insertInsight("insight-a", "Paused", null, null);
+    await h.store.insertInsight("insight-b", "Active", null, null);
+    await h.store.setInsightStatus("insight-a", "paused");
+    assert.equal(await h.store.snoozeInsight("insight-a", local(2026, 11, 1)), false);
+    assert.equal(h.pending("insight-a").length, 0);
+    const [before] = h.pending("insight-b");
+    assert.equal(await h.store.snoozeInsight("insight-b", local(2026, 9, 1)), false);
+    assert.deepEqual(h.pending("insight-b"), [before]);
+  } finally { h.close(); }
+});

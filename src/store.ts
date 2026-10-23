@@ -219,6 +219,28 @@ export function createStore({ db, id, now }: StoreDependencies) {
     });
   }
 
+  /**
+   * Defers an active insight until `until` without recording a response. The pending event is
+   * cancelled (it stays in history) and replaced by one at the same stage, so exactly one remains.
+   * Returns false when there is nothing to snooze.
+   */
+  async function snoozeInsight(insightId: string, until: Date): Promise<boolean> {
+    let snoozed = false;
+    await db().withTransactionAsync(async () => {
+      const insight = await getInsight(insightId);
+      if (!insight || insight.status !== "active" || until.getTime() <= now().getTime()) return;
+      const pending = await db().getFirstAsync<ResurfaceEvent>(
+        "SELECT * FROM events WHERE insightId = ? AND shownAt IS NULL AND cancelledAt IS NULL ORDER BY scheduledAt LIMIT 1", insightId,
+      );
+      if (!pending) return;
+      await db().runAsync("UPDATE events SET cancelledAt = ? WHERE id = ?", now().toISOString(), pending.id);
+      await insertEvent({ ...eventFor(insightId, pending.stage, now()), scheduledAt: until.toISOString() });
+      await track("insight_snoozed");
+      snoozed = true;
+    });
+    return snoozed;
+  }
+
   async function setInsightStatus(insightId: string, status: InsightStatus): Promise<void> {
     await db().withTransactionAsync(async () => {
       await setInsightStatusInTransaction(insightId, status);
@@ -322,7 +344,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
   return {
     exportRows, replaceAllRows,
     track, getSettings, saveSettings, insertInsight, countInsights, listInsights, getInsight, getEvent,
-    getDetail, selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus,
+    getDetail, selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus, snoozeInsight,
     editInsight, deleteInsightRow, markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics,
     notificationCandidates, clearFutureNotificationPlans, setNotificationPlan,
   };

@@ -24,7 +24,7 @@ Jira epics: [core loop](https://alexadima.atlassian.net/browse/SCRUM-23), [data 
 ## Epic 3 — Resurfacing and notifications (P0/P1)
 
 10. **Notification reliability (P0).** Test scheduling, deep links, permission changes, foreground/background/terminated launches, time-zone and daylight-saving changes, edit/pause/archive/delete, and long absences. Gate: the app-only Today path always works; notifications do not duplicate, leak private text by default, or target removed insights.
-11. **Timed pause and snooze (P1).** Let a user defer an insight until a chosen date without treating the deferral as a positive response. Gate: one pending event remains, history is preserved, and the reminder queue reconciles correctly.
+11. **Timed pause and snooze (P1).** Let a user defer an insight until a chosen date without treating the deferral as a positive response. Gate: one pending event remains, history is preserved, and the reminder queue reconciles correctly. *Status: implemented 23 Oct 2026 — Snooze (1 week / 1 month / 3 months) on an active insight's detail screen, which also shows when it next resurfaces. `snoozeInsight` cancels the pending event (kept in history) and schedules one at the same stage; it records no response and reconciles reminders. Covered by three lifecycle tests; tried on the iOS simulator (Release build).*
 12. **Richer reminder controls (P1).** Add day/time window and quiet-period controls only after observing beta needs. Gate: settings remain understandable and do not promise exact OS delivery times.
 
 ## Epic 4 — Easier capture and retrieval (P1)

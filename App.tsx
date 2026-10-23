@@ -9,17 +9,17 @@ import { extractTextFromImage, isSupported as isOcrSupported } from "expo-text-e
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert, BackHandler, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
-  StyleSheet, Switch, Text, TextInput, View,
+  StyleSheet, Switch, Text, TextInput, View, useWindowDimensions,
 } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH } from "./src/backup";
-import { isValidInsight, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
+import { addCalendarDays, isValidInsight, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
 import { clearTransientCaches, deletePickedImageFromCache, imageDataUri } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
   countInsights, createBackupFile, createInsight, deleteCachedFile, deleteInsight, editInsight, getBetaMetrics, getDetail,
   getEvent, getInsight, getSettings, getShownCount, listInsights, markCompleted, markValueFeedbackAsked, markOpened, markShown,
-  openStorage, respondToEvent, restoreBackup, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
+  openStorage, respondToEvent, restoreBackup, snoozeInsight, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
 } from "./src/storage";
 import { palette } from "./src/theme";
 import { Action, Body, BottomNav, Eyebrow, Header, IconButton, Screen, Surface, Title } from "./src/ui";
@@ -120,6 +120,8 @@ function ResurfaceApp() {
   const [backupMode, setBackupMode] = useState<"create" | "restore" | null>(null);
   const [backupPassword, setBackupPassword] = useState("");
   const [backupConfirm, setBackupConfirm] = useState("");
+  // Side-by-side cards break words at large accessibility text sizes, so they stack instead.
+  const stackChoices = useWindowDimensions().fontScale > 1.3;
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupSharing, setBackupSharing] = useState(false);
   const backupSession = useRef(0);
@@ -385,6 +387,26 @@ function ResurfaceApp() {
     } catch (error) { report(error); }
   };
 
+  const snooze = () => {
+    if (!detail || !settings) return;
+    const insightId = detail.insight.id;
+    const choose = (days: number) => () => {
+      void (async () => {
+        try {
+          await snoozeInsight(insightId, addCalendarDays(new Date(), days));
+          await reconcileNotifications(settings);
+          await openDetail(insightId, detailOrigin);
+        } catch (error) { report(error); }
+      })();
+    };
+    Alert.alert("Snooze this insight?", "It will come back after the time you choose. This doesn't count as an answer.", [
+      { text: "1 week", onPress: choose(7) },
+      { text: "1 month", onPress: choose(30) },
+      { text: "3 months", onPress: choose(90) },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+
   const saveEdit = async () => {
     if (!detail || !isValidInsight(editContent, !!detail.insight.imagePath)) return;
     try {
@@ -647,6 +669,13 @@ function ResurfaceApp() {
       </> : <>
         <InsightCard insight={detail.insight} />
         <View style={screenStyles.gap24}><Action kind="secondary" label="Edit" icon="create-outline" onPress={() => setEditing(true)} /></View>
+        {detail.insight.status === "active" && (() => {
+          const next = detail.events.find((event) => !event.shownAt && !event.cancelledAt);
+          return <>
+            {next && <View style={screenStyles.gap24}><Body muted>Resurfaces after {formatDate(next.scheduledAt)}</Body></View>}
+            <View style={screenStyles.gap12}><Action kind="ghost" label="Snooze" icon="time-outline" onPress={snooze} /></View>
+          </>;
+        })()}
         <View style={screenStyles.gap12}>{detail.insight.status === "active" ? <Action kind="ghost" label="Pause resurfacing" onPress={() => { void updateStatus("paused"); }} /> : <Action kind="secondary" label={detail.insight.status === "paused" ? "Resume resurfacing" : "Restore insight"} onPress={() => { void updateStatus("active"); }} />}</View>
         {detail.insight.status !== "archived" && <View style={screenStyles.gap12}><Action kind="ghost" label="Archive" onPress={() => { Alert.alert("Archive this insight?", "You can restore it from Library later.", [{ text: "Cancel", style: "cancel" }, { text: "Archive", onPress: () => { void updateStatus("archived"); } }]); }} /></View>}
         <View style={screenStyles.gap12}><Action kind="danger" label="Delete permanently" onPress={confirmDelete} /></View>
@@ -659,7 +688,7 @@ function ResurfaceApp() {
       <Header title="Settings" back={() => { void goToday(); }} />
       <Eyebrow>Make it yours</Eyebrow><Title>A gentler rhythm.</Title>
       <Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Resurfacing frequency</Text><Body muted>Maximum number of insights Today can show in one day.</Body>
-      <View style={screenStyles.frequency}>{([1, 3, 5] as const).map((cap) => <Pressable key={cap} accessibilityRole="radio" accessibilityState={{ checked: settings.dailyCap === cap }} accessibilityLabel={`${cap === 1 ? "Light" : cap === 3 ? "Standard" : "More"}, up to ${cap} per day`} onPress={() => { void updateSettings({ dailyCap: cap }); }} style={[screenStyles.frequencyOption, settings.dailyCap === cap && screenStyles.frequencySelected]}><Text style={screenStyles.frequencyName}>{cap === 1 ? "Light" : cap === 3 ? "Standard" : "More"}</Text><Text style={screenStyles.frequencyDetail}>Up to {cap}/day</Text></Pressable>)}</View>
+      <View style={[screenStyles.frequency, stackChoices && screenStyles.frequencyStacked]}>{([1, 3, 5] as const).map((cap) => <Pressable key={cap} accessibilityRole="radio" accessibilityState={{ checked: settings.dailyCap === cap }} accessibilityLabel={`${cap === 1 ? "Light" : cap === 3 ? "Standard" : "More"}, up to ${cap} per day`} onPress={() => { void updateSettings({ dailyCap: cap }); }} style={[screenStyles.frequencyOption, stackChoices && screenStyles.frequencyOptionStacked, settings.dailyCap === cap && screenStyles.frequencySelected]}><Text style={screenStyles.frequencyName}>{cap === 1 ? "Light" : cap === 3 ? "Standard" : "More"}</Text><Text style={screenStyles.frequencyDetail}>Up to {cap}/day</Text></Pressable>)}</View>
       <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Notifications</Text><Body muted>One approximate notification window per day. Today still works if notifications are off.</Body></View>
       {notificationGranted === false && <View style={screenStyles.gap12}><Action kind="secondary" label="Enable notifications" onPress={() => { void enableNotifications(); }} /></View>}
       <Text style={screenStyles.fieldLabel}>Preferred time (24-hour HH:MM)</Text>
@@ -740,7 +769,7 @@ const screenStyles = StyleSheet.create({
   libraryIcon: { width: 40, height: 40, borderRadius: 13, backgroundColor: palette.soft, alignItems: "center", justifyContent: "center" }, libraryText: { color: palette.ink, fontSize: 15, lineHeight: 21, fontWeight: "600" }, libraryDate: { color: palette.muted, fontSize: 12, marginTop: 5 },
   sectionTitle: { color: palette.ink, fontSize: 18, fontWeight: "700", marginBottom: 9 },
   historyRow: { flexDirection: "row", gap: 14, borderLeftWidth: 1, borderLeftColor: palette.border, paddingLeft: 18, paddingBottom: 20, marginLeft: 7 }, historyDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: palette.accentDark, marginLeft: -23 }, historyDate: { color: palette.ink, fontWeight: "700" }, historyMeta: { color: palette.muted, marginTop: 4 }, reflectionText: { color: palette.ink, marginTop: 10, lineHeight: 22 },
-  frequency: { flexDirection: "row", gap: 8, marginTop: 16 }, frequencyOption: { flex: 1, padding: 12, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.border, borderRadius: 15 }, frequencySelected: { borderColor: palette.accentDark, backgroundColor: palette.soft }, frequencyName: { color: palette.ink, fontWeight: "700", fontSize: 13 }, frequencyDetail: { color: palette.muted, fontSize: 11, marginTop: 5 },
+  frequency: { flexDirection: "row", gap: 8, marginTop: 16 }, frequencyStacked: { flexDirection: "column" }, frequencyOptionStacked: { flex: 0 }, frequencyOption: { flex: 1, padding: 12, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.border, borderRadius: 15 }, frequencySelected: { borderColor: palette.accentDark, backgroundColor: palette.soft }, frequencyName: { color: palette.ink, fontWeight: "700", fontSize: 13 }, frequencyDetail: { color: palette.muted, fontSize: 11, marginTop: 5 },
   switchRow: { flexDirection: "row", alignItems: "center", gap: 14, marginTop: 16 }, switchTitle: { color: palette.ink, fontWeight: "700", fontSize: 15 }, switchDescription: { color: palette.muted, fontSize: 12, lineHeight: 18, marginTop: 3 },
   backupHint: { color: palette.danger, fontSize: 13, marginTop: 8 },
   modalBackdrop: { flex: 1, backgroundColor: "#14221ACC", justifyContent: "center", padding: 24 }, feedbackBox: { padding: 24 }, feedbackTitle: { color: palette.ink, fontSize: 26, lineHeight: 33, fontWeight: "700", marginBottom: 10 },

@@ -66,7 +66,7 @@ const store = createStore({ db, id, now: () => new Date() });
 
 export const {
   track, getSettings, saveSettings, countInsights, listInsights, getInsight, getEvent, getDetail,
-  selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus, editInsight,
+  selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus, snoozeInsight, editInsight,
   markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics, notificationCandidates,
   clearFutureNotificationPlans, setNotificationPlan,
 } = store;
