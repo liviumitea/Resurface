@@ -55,6 +55,7 @@ Not verified: any physical device; Android beyond CI build (no Android device av
 
 ## Suggested next steps
 
+0. **Photo save is very slow (start here).** Measured on the iOS simulator, 23 Oct 2026: `ImageManipulator.manipulateAsync` took 13–115 s on a photo-library pick (HEIC), while size lookup, reading bytes, AES encryption and writing took under 50 ms combined. Photos are now downscaled to a 2048 px long edge (4 MB → ~0.7 MB encrypted), which helps storage and backups but not the speed. Try the newer `ImageManipulator.manipulate(uri).resize(...).renderAsync()` API, or have the picker return compressed JPEG (`quality < 1`), and check a real device before deciding. Backup/restore with photos is still untested; the simulator now holds two photo insights for that test.
 1. Physical iPhone acceptance (SCRUM-31): full core loop, notifications/deep links, VoiceOver, backup/restore with photos, app update keeping data. Then close SCRUM-33/51 with evidence.
 2. Signed beta distribution (backlog item 19) once an Apple developer account and bundle signing are available.
 3. Android device or emulator acceptance when available; add FLAG_SECURE if the app-switcher cover is required there.

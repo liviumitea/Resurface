@@ -3,6 +3,7 @@ import { Directory, File, Paths } from "expo-file-system";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as SecureStore from "expo-secure-store";
 import { fromByteArray } from "base64-js";
+import { Image } from "react-native";
 import { BACKUP_EXTENSION } from "./backup";
 
 export const IMAGE_KEY_NAME = "resurface.image-key.v1";
@@ -28,8 +29,23 @@ function imageDirectory(): Directory {
 }
 
 /** The picker output is normalized to JPEG so the encrypted copy has one display format. */
+/**
+ * Longest edge kept for a saved photo. Full camera resolution (~4 MB each) made saving and opening
+ * take many seconds and would make backups too large to hold in memory; 2048 px keeps text legible.
+ */
+const MAX_PHOTO_EDGE = 2048;
+
+function imageSize(uri: string): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => Image.getSize(uri, (width, height) => resolve({ width, height }), () => resolve(null)));
+}
+
 export async function encryptImageFromUri(uri: string, imageId: string): Promise<string> {
-  const normalized = await ImageManipulator.manipulateAsync(uri, [], {
+  const size = await imageSize(uri);
+  // Only ever shrink. Without a known size the photo is kept as it is rather than risk upscaling.
+  const resize: ImageManipulator.Action[] = size && Math.max(size.width, size.height) > MAX_PHOTO_EDGE
+    ? [{ resize: size.width >= size.height ? { width: MAX_PHOTO_EDGE } : { height: MAX_PHOTO_EDGE } }]
+    : [];
+  const normalized = await ImageManipulator.manipulateAsync(uri, resize, {
     compress: 0.82,
     format: ImageManipulator.SaveFormat.JPEG,
   });
