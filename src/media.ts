@@ -9,6 +9,11 @@ const IMAGE_KEY_NAME = "resurface.image-key.v1";
 async function imageKey(): Promise<AESEncryptionKey> {
   const saved = await SecureStore.getItemAsync(IMAGE_KEY_NAME);
   if (saved) return AESEncryptionKey.import(saved, "hex");
+  // Encrypted photos without a key mean the key is unavailable or lost; a replacement
+  // would overwrite it if it reappears and make those photos permanently unreadable.
+  if (imageDirectory().list().some((entry) => entry.name.endsWith(".enc"))) {
+    throw new Error("The photo key is unavailable on this device. Your photos have not been changed.");
+  }
   const created = await AESEncryptionKey.generate();
   await SecureStore.setItemAsync(IMAGE_KEY_NAME, await created.encoded("hex"));
   return created;

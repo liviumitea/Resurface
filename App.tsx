@@ -30,13 +30,21 @@ function formatDate(value: string): string {
 
 function InsightImage({ path, height = 260 }: { path: string | null; height?: number }) {
   const [uri, setUri] = useState<string | null>(null);
+  const [state, setState] = useState<"loading" | "ready" | "missing" | "error">("loading");
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
-    imageDataUri(path).then((next) => { if (active) setUri(next); }).catch(() => { if (active) setUri(null); });
+    setUri(null);
+    setState("loading");
+    imageDataUri(path)
+      .then((next) => { if (active) { setUri(next); setState(next ? "ready" : "missing"); } })
+      .catch(() => { if (active) setState("error"); });
     return () => { active = false; };
-  }, [path]);
+  }, [path, attempt]);
   if (!path) return null;
-  if (!uri) return <View style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="image-outline" size={28} color={palette.muted} /></View>;
+  if (state === "missing") return <View style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="image-outline" size={28} color={palette.muted} /><Text style={screenStyles.imageMessage}>The original photo isn't on this device.</Text></View>;
+  if (state === "error") return <View style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="alert-circle-outline" size={28} color={palette.muted} /><Text style={screenStyles.imageMessage}>This photo couldn't be opened. It hasn't been changed.</Text><Pressable accessibilityRole="button" onPress={() => setAttempt((value) => value + 1)}><Text style={screenStyles.imageRetry}>Try again</Text></Pressable></View>;
+  if (!uri) return <View accessibilityLabel="Loading photo" style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="image-outline" size={28} color={palette.muted} /></View>;
   return <Image source={{ uri }} resizeMode="contain" style={[screenStyles.image, { height }]} accessibilityLabel="Original saved image" />;
 }
 
@@ -86,6 +94,8 @@ function ResurfaceApp() {
   const [libraryStatus, setLibraryStatus] = useState<InsightStatus>("active");
   const [librarySearch, setLibrarySearch] = useState("");
   const [libraryItems, setLibraryItems] = useState<Insight[]>([]);
+  const [libraryError, setLibraryError] = useState(false);
+  const [libraryAttempt, setLibraryAttempt] = useState(0);
   const [detail, setDetail] = useState<InsightDetail | null>(null);
   const [detailOrigin, setDetailOrigin] = useState<"today" | "library">("library");
   const [editing, setEditing] = useState(false);
@@ -209,10 +219,16 @@ function ResurfaceApp() {
     }).catch(report);
   }, [route, todayStatus, current?.event.id, current?.event.shownAt, settings]);
 
+  // The previous list stays visible while a search refines it; a failure replaces it
+  // with a retryable message rather than an alert over stale results.
   useEffect(() => {
     if (route !== "library") return;
-    void listInsights(libraryStatus, librarySearch).then(setLibraryItems).catch(report);
-  }, [route, libraryStatus, librarySearch]);
+    let active = true;
+    listInsights(libraryStatus, librarySearch)
+      .then((items) => { if (active) { setLibraryItems(items); setLibraryError(false); } })
+      .catch(() => { if (active) setLibraryError(true); });
+    return () => { active = false; };
+  }, [route, libraryStatus, librarySearch, libraryAttempt]);
 
   const beginCapture = (origin: CaptureOrigin) => {
     deletePickedImageFromCache(captureImageUri);
@@ -508,7 +524,8 @@ function ResurfaceApp() {
       <View style={screenStyles.libraryTop}><Eyebrow>What you've saved</Eyebrow><Title>Your insights</Title><TextInput placeholder="Search content or context" placeholderTextColor={palette.muted} value={librarySearch} onChangeText={setLibrarySearch} style={screenStyles.search} accessibilityLabel="Search insights" /></View>
       <View style={screenStyles.filters}>{(["active", "paused", "archived"] as InsightStatus[]).map((status) => <Pressable key={status} onPress={() => setLibraryStatus(status)} style={[screenStyles.filter, libraryStatus === status && screenStyles.selectedFilter]}><Text style={[screenStyles.filterText, libraryStatus === status && screenStyles.selectedFilterText]}>{status[0]!.toUpperCase() + status.slice(1)}</Text></Pressable>)}</View>
       <ScrollView contentContainerStyle={screenStyles.libraryList} keyboardShouldPersistTaps="handled">
-        {libraryItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="albums-outline" size={36} color={palette.accentDark} /><Text style={screenStyles.emptyTitle}>{librarySearch ? "No matching insights." : `No ${libraryStatus} insights.`}</Text><Body muted>What you save will be here whenever you need it.</Body></Surface>
+        {libraryError ? <Surface style={screenStyles.emptyCard}><Ionicons name="cloud-offline-outline" size={36} color={palette.accentDark} /><Text style={screenStyles.emptyTitle}>Your library couldn't load.</Text><Body muted>Your insights are still saved on this device. Nothing was changed or reset.</Body><View style={screenStyles.gap24}><Action label="Try again" icon="refresh" onPress={() => setLibraryAttempt((attempt) => attempt + 1)} /></View></Surface>
+          : libraryItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="albums-outline" size={36} color={palette.accentDark} /><Text style={screenStyles.emptyTitle}>{librarySearch ? "No matching insights." : `No ${libraryStatus} insights.`}</Text><Body muted>What you save will be here whenever you need it.</Body></Surface>
           : libraryItems.map((insight) => <Pressable key={insight.id} accessibilityRole="button" onPress={() => { void openDetail(insight.id); }} style={screenStyles.libraryRow}><View style={screenStyles.libraryIcon}><Ionicons name={insight.imagePath ? "image-outline" : "bookmark-outline"} size={19} color={palette.accentDark} /></View><View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{insight.content || "Saved photo"}</Text><Text style={screenStyles.libraryDate}>{formatDate(insight.createdAt)}</Text></View><Ionicons name="chevron-forward" size={17} color={palette.muted} /></Pressable>)}
       </ScrollView>
       <BottomNav active="library" onToday={() => { void goToday(); }} onCapture={() => openCaptureChoice("library")} onLibrary={goLibrary} />
@@ -582,7 +599,8 @@ const screenStyles = StyleSheet.create({
   cardMark: { width: 32, height: 32, borderRadius: 11, backgroundColor: palette.soft, alignItems: "center", justifyContent: "center", marginBottom: 19 },
   cardText: { color: palette.ink, fontSize: 25, lineHeight: 35, fontWeight: "600", letterSpacing: -0.6 }, cardTextCompact: { color: palette.ink, fontSize: 20, lineHeight: 29, fontWeight: "600" },
   savedDate: { color: palette.muted, fontSize: 12, marginTop: 22 }, context: { color: palette.muted, fontSize: 15, lineHeight: 23, marginTop: 18 },
-  image: { width: "100%", marginTop: 18, borderRadius: 12 }, imagePlaceholder: { width: "100%", marginTop: 18, backgroundColor: palette.soft, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  image: { width: "100%", marginTop: 18, borderRadius: 12 }, imagePlaceholder: { width: "100%", marginTop: 18, backgroundColor: palette.soft, borderRadius: 12, alignItems: "center", justifyContent: "center", padding: 16, gap: 8 },
+  imageMessage: { color: palette.muted, fontSize: 13, textAlign: "center" }, imageRetry: { color: palette.accentDark, fontWeight: "700", padding: 8 },
   skeletonLine: { height: 14, borderRadius: 7, backgroundColor: palette.soft, marginBottom: 12 }, skeletonLarge: { height: 24, borderRadius: 9 },
   skeletonButton: { height: 52, borderRadius: 15, backgroundColor: palette.soft },
   emptyCard: { alignItems: "flex-start", marginTop: 18, gap: 12 }, emptyTitle: { color: palette.ink, fontSize: 22, fontWeight: "700", marginTop: 12 },
