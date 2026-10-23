@@ -12,7 +12,7 @@ import {
   StyleSheet, Switch, Text, TextInput, View,
 } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { BackupError, MIN_BACKUP_PASSWORD_LENGTH } from "./src/backup";
+import { BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH } from "./src/backup";
 import { isValidInsight, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
 import { clearTransientCaches, deletePickedImageFromCache, imageDataUri } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
@@ -444,23 +444,29 @@ function ResurfaceApp() {
   const backupMessage = (error: unknown) =>
     error instanceof BackupError ? error.message : "Something went wrong. Nothing on this device was changed.";
 
+  const shareBackup = async (backup: { uri: string; missingPhotos: number }) => {
+    try {
+      if (!(await Sharing.isAvailableAsync())) throw new Error("Sharing isn't available on this device.");
+      await Sharing.shareAsync(backup.uri, { mimeType: "application/octet-stream", UTI: BACKUP_UTI, dialogTitle: "Save your Resurface backup" });
+      if (backup.missingPhotos) Alert.alert("Backup created", `${backup.missingPhotos} photo${backup.missingPhotos === 1 ? " was" : "s were"} missing on this device and couldn't be included.`);
+    } catch (error) { Alert.alert("Backup not shared", backupMessage(error)); }
+    finally {
+      deleteCachedFile(backup.uri);
+    }
+  };
+
+  // The password sheet stays up until sharing finishes, so it closes only after the share
+  // sheet has been dismissed.
   const createBackup = async () => {
     setBackupBusy(true);
-    let uri: string | null = null;
     try {
       const result = await createBackupFile(backupPassword);
-      uri = result.uri;
-      setBackupMode(null);
       setBackupPassword("");
       setBackupConfirm("");
-      if (!(await Sharing.isAvailableAsync())) throw new Error("Sharing isn't available on this device.");
-      await Sharing.shareAsync(result.uri, { mimeType: "application/octet-stream", UTI: "public.data", dialogTitle: "Save your Resurface backup" });
-      if (result.missingPhotos) Alert.alert("Backup created", `${result.missingPhotos} photo${result.missingPhotos === 1 ? " was" : "s were"} missing on this device and couldn't be included.`);
+      await shareBackup(result);
+      setBackupMode(null);
     } catch (error) { Alert.alert("Backup not created", backupMessage(error)); }
-    finally {
-      if (uri) deleteCachedFile(uri);
-      setBackupBusy(false);
-    }
+    finally { setBackupBusy(false); }
   };
 
   const chooseRestoreFile = () => {
@@ -651,7 +657,9 @@ function ResurfaceApp() {
       <View style={screenStyles.gap24}><Body muted>Resurface 0.1.0 · Device-only beta</Body></View>
     </Screen>}
 
-    <Modal visible={!!backupMode} transparent animationType="fade" onRequestClose={closeBackupSheet}>
+    {/* An in-screen overlay rather than a native Modal, so the share sheet is the only view
+        controller iOS presents and nothing competes with it. */}
+    {!!backupMode && <View style={StyleSheet.absoluteFill}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={screenStyles.modalBackdrop}>
         <Surface style={screenStyles.feedbackBox}>
           <Eyebrow>{backupMode === "create" ? "Encrypted backup" : "Restore backup"}</Eyebrow>
@@ -663,13 +671,13 @@ function ResurfaceApp() {
           {backupMode === "create" && backupConfirm.length > 0 && backupConfirm !== backupPassword && <Text style={screenStyles.backupHint}>The passwords don't match.</Text>}
           <View style={screenStyles.gap24}>
             {backupMode === "create"
-              ? <Action label={backupBusy ? "Encrypting… this can take a moment" : "Create backup"} disabled={backupBusy || backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH || backupPassword !== backupConfirm} onPress={() => { void createBackup(); }} />
+              ? <Action label={backupBusy ? "Encrypting and sharing…" : "Create backup"} disabled={backupBusy || backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH || backupPassword !== backupConfirm} onPress={() => { void createBackup(); }} />
               : <Action kind="danger" label={backupBusy ? "Restoring…" : "Replace and restore"} disabled={backupBusy || backupPassword.length === 0} onPress={() => { void restore(); }} />}
           </View>
           <View style={screenStyles.gap12}><Action kind="ghost" label="Cancel" disabled={backupBusy} onPress={closeBackupSheet} /></View>
         </Surface>
       </KeyboardAvoidingView>
-    </Modal>
+    </View>}
 
     <Modal visible={!!feedbackEventId} transparent animationType="fade" onRequestClose={() => { void finishFeedback(); }}>
       <View style={screenStyles.modalBackdrop}><Surface style={screenStyles.feedbackBox}><Eyebrow>A quick check-in</Eyebrow><Text style={screenStyles.feedbackTitle}>Was this worth resurfacing today?</Text><Body muted>Your answer helps us understand whether this is useful. It stays on this device.</Body><View style={screenStyles.gap24}><Action label="Yes" onPress={() => { void finishFeedback("yes"); }} /></View><View style={screenStyles.gap12}><Action kind="secondary" label="Not really" onPress={() => { void finishFeedback("not_really"); }} /></View><View style={screenStyles.gap12}><Action kind="ghost" label="Skip" onPress={() => { void finishFeedback(); }} /></View></Surface></View>

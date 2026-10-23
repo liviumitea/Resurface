@@ -11,7 +11,25 @@
       "bundleIdentifier": "app.resurface.mobile",
       "infoPlist": {
         "NSCameraUsageDescription": "Take photos of things you want to remember.",
-        "NSPhotoLibraryUsageDescription": "Choose photos of things you want to remember."
+        "NSPhotoLibraryUsageDescription": "Choose photos of things you want to remember.",
+        "UTExportedTypeDeclarations": [
+          {
+            "UTTypeIdentifier": "app.resurface.mobile.backup",
+            "UTTypeDescription": "Resurface Backup",
+            "UTTypeConformsTo": [
+              "public.data",
+              "public.content"
+            ],
+            "UTTypeTagSpecification": {
+              "public.filename-extension": [
+                "resurfacebackup"
+              ],
+              "public.mime-type": [
+                "application/x-resurface-backup"
+              ]
+            }
+          }
+        ]
       }
     },
     "android": {

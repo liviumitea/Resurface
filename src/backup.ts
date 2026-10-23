@@ -12,6 +12,8 @@ import { isValidInsight, type Insight, type Reflection, type ResurfaceEvent, typ
 export const BACKUP_FORMAT = "resurface-backup";
 export const BACKUP_VERSION = 1;
 export const BACKUP_EXTENSION = "resurfacebackup";
+/** Declared in app.json so iOS treats backups as ordinary data (for example, offering Save to Files). */
+export const BACKUP_UTI = "app.resurface.mobile.backup";
 export const MIN_BACKUP_PASSWORD_LENGTH = 8;
 
 export type BackupSettings = Pick<Settings, "dailyCap" | "notificationTime" | "showInsightText">;

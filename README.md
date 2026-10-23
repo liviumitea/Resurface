@@ -46,6 +46,8 @@ npm start
 
 `npm start` starts Metro for the development client. `npm run ios` / `npm run android` generates and builds the native project locally. To check JavaScript bundling without a native toolchain:
 
+In development builds, the Expo dev menu's floating **Tools** button lives in its own window. On iOS 27 a tap can leave that window key, and the backup share sheet is then torn down as soon as it appears. Test sharing in a Release build (`npm run ios -- --configuration Release`), which has no dev menu; the full backup and restore flow passed there on 23 October 2026.
+
 If an iOS build succeeds but `simctl openurl` times out, let the simulator finish booting in Xcode's Device Hub, then start Metro with `npm start -- --localhost` and press `i` to open the installed development build. Rebuild with `npm run ios` after adding or changing a native dependency. A successful compile alone does not confirm the app opened.
 
 ```sh

@@ -47,8 +47,16 @@ export async function encryptImageFromUri(uri: string, imageId: string): Promise
 }
 
 /** Decrypted JPEG bytes, or null when the encrypted file is missing. Never write these to disk. */
+/**
+ * Stored photo paths are absolute URIs, but iOS can move the app's data container on update or
+ * reinstall. Only the file name is trusted; it is resolved against the current photo folder.
+ */
+function storedImageFile(encryptedPath: string): File {
+  return new File(imageDirectory(), encryptedPath.split("/").pop() ?? "");
+}
+
 export async function readImageBytes(encryptedPath: string): Promise<Uint8Array | null> {
-  const file = new File(encryptedPath);
+  const file = storedImageFile(encryptedPath);
   if (!file.exists) return null;
   const sealed = AESSealedData.fromCombined(await file.bytes());
   return new Uint8Array(await aesDecryptAsync(sealed, await imageKey()));
@@ -84,7 +92,7 @@ export function deleteUnreferencedImages(referencedPaths: (string | null)[]): vo
 
 export function deleteEncryptedImage(encryptedPath: string | null): void {
   if (!encryptedPath) return;
-  const file = new File(encryptedPath);
+  const file = storedImageFile(encryptedPath);
   if (file.exists) file.delete();
 }
 
