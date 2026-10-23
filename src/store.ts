@@ -238,6 +238,10 @@ export function createStore({ db, id, now }: StoreDependencies) {
     return { imagePath: insight.imagePath };
   }
 
+  async function markValueFeedbackAsked(): Promise<void> {
+    await track("resurface_value_feedback_asked");
+  }
+
   async function saveValueFeedback(eventId: string, value: "yes" | "not_really"): Promise<void> {
     const result = await db().runAsync("UPDATE events SET valueFeedback = ? WHERE id = ? AND valueFeedback IS NULL", value, eventId);
     if (result.changes) await track("resurface_value_feedback");
@@ -247,13 +251,19 @@ export function createStore({ db, id, now }: StoreDependencies) {
     return (await db().getFirstAsync<{ count: number }>("SELECT count(*) AS count FROM events WHERE shownAt IS NOT NULL"))?.count ?? 0;
   }
 
-  async function getBetaMetrics(): Promise<{ saved: number; shown: number; answered: number; valuable: number }> {
+  /**
+   * Content-free beta signals. Answer rate is answered / shown and worth rate is yes / answered
+   * (build plan); `asked` is reported beside them because the question is only occasional.
+   * `saved` counts insights currently kept, so deletions lower it.
+   */
+  async function getBetaMetrics(): Promise<{ saved: number; shown: number; asked: number; answered: number; valuable: number }> {
     const saved = await countInsights();
+    const asked = (await db().getFirstAsync<{ count: number }>("SELECT count(*) AS count FROM analytics WHERE name = 'resurface_value_feedback_asked'"))?.count ?? 0;
     const row = await db().getFirstAsync<{ shown: number; answered: number; valuable: number | null }>(
       `SELECT count(shownAt) AS shown, count(valueFeedback) AS answered,
         sum(CASE WHEN valueFeedback = 'yes' THEN 1 ELSE 0 END) AS valuable FROM events`,
     );
-    return { saved, shown: row?.shown ?? 0, answered: row?.answered ?? 0, valuable: row?.valuable ?? 0 };
+    return { saved, shown: row?.shown ?? 0, asked, answered: row?.answered ?? 0, valuable: row?.valuable ?? 0 };
   }
 
   async function notificationCandidates(clock = now()): Promise<NotificationCandidate[]> {
@@ -313,7 +323,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
     exportRows, replaceAllRows,
     track, getSettings, saveSettings, insertInsight, countInsights, listInsights, getInsight, getEvent,
     getDetail, selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus,
-    editInsight, deleteInsightRow, saveValueFeedback, getShownCount, getBetaMetrics,
+    editInsight, deleteInsightRow, markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics,
     notificationCandidates, clearFutureNotificationPlans, setNotificationPlan,
   };
 }

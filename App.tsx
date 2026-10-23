@@ -18,7 +18,7 @@ import { deletePickedImageFromCache, imageDataUri } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
   countInsights, createBackupFile, createInsight, deleteCachedFile, deleteInsight, editInsight, getBetaMetrics, getDetail,
-  getEvent, getInsight, getSettings, getShownCount, listInsights, markCompleted, markOpened, markShown,
+  getEvent, getInsight, getSettings, getShownCount, listInsights, markCompleted, markValueFeedbackAsked, markOpened, markShown,
   openStorage, respondToEvent, restoreBackup, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
 } from "./src/storage";
 import { palette } from "./src/theme";
@@ -115,7 +115,7 @@ function ResurfaceApp() {
   const [reflectionText, setReflectionText] = useState("");
   const [feedbackEventId, setFeedbackEventId] = useState<string | null>(null);
   const [pendingNextIndex, setPendingNextIndex] = useState(0);
-  const [metrics, setMetrics] = useState<{ saved: number; shown: number; answered: number; valuable: number } | null>(null);
+  const [metrics, setMetrics] = useState<{ saved: number; shown: number; asked: number; answered: number; valuable: number } | null>(null);
   const [notificationGranted, setNotificationGranted] = useState<boolean | null>(null);
   const [backupMode, setBackupMode] = useState<"create" | "restore" | null>(null);
   const [backupPassword, setBackupPassword] = useState("");
@@ -341,6 +341,7 @@ function ResurfaceApp() {
     const next = todayIndex + 1;
     const shownCount = await getShownCount();
     if (!current.event.valueFeedback && shouldAskValueFeedback(shownCount)) {
+      void markValueFeedbackAsked().catch(() => undefined);
       setFeedbackEventId(current.event.id);
       setPendingNextIndex(next);
     } else setTodayIndex(next);
@@ -645,7 +646,7 @@ function ResurfaceApp() {
       <View style={screenStyles.gap24}><Text style={screenStyles.sectionTitle}>Backup</Text><Body muted>Create a password-protected file you can save in Files, iCloud Drive, Google Drive or anywhere else, and restore it on this or another device.</Body></View>
       <View style={screenStyles.gap12}><Action kind="secondary" label="Create encrypted backup" icon="lock-closed-outline" onPress={() => openBackupSheet("create")} /></View>
       <View style={screenStyles.gap12}><Action kind="ghost" label="Restore from backup" icon="download-outline" onPress={chooseRestoreFile} /></View>
-      <View style={screenStyles.gap24}><Text style={screenStyles.sectionTitle}>Beta signals on this device</Text><Body muted>{metrics ? `${metrics.saved} saved · ${metrics.shown} shown · ${metrics.answered} value answers · ${metrics.valuable} marked worthwhile` : "Loading…"}</Body><Body muted>{metrics?.shown ? `${Math.round((metrics.answered / metrics.shown) * 100)}% of shown insights received a value answer.` : "Answer rate appears after the first resurfacing."}</Body><Body muted>{metrics?.answered ? `${Math.round((metrics.valuable / metrics.answered) * 100)}% of answers said a resurfacing was worthwhile.` : "Value rate appears after you answer a feedback question."}</Body></View>
+      <View style={screenStyles.gap24}><Text style={screenStyles.sectionTitle}>Beta signals on this device</Text><Body muted>{metrics ? `${metrics.saved} saved · ${metrics.shown} shown · asked ${metrics.asked} · ${metrics.answered} answered · ${metrics.valuable} marked worthwhile` : "Loading…"}</Body><Body muted>{metrics?.shown ? `${Math.round((metrics.answered / metrics.shown) * 100)}% of shown insights received a value answer.` : "Answer rate appears after the first resurfacing."}</Body><Body muted>{metrics?.answered ? `${Math.round((metrics.valuable / metrics.answered) * 100)}% of answers said a resurfacing was worthwhile.` : "Value rate appears after you answer a feedback question."}</Body></View>
       <View style={screenStyles.gap24}><Body muted>Resurface 0.1.0 · Device-only beta</Body></View>
     </Screen>}
 
