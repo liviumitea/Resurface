@@ -119,6 +119,19 @@ export function planNotifications(
   return plans;
 }
 
+export type PresentedNotification = { identifier: string; eventId: string | null; body: string | null };
+
+/**
+ * Delivered notifications to remove from the lock screen and Notification Center: those not tied
+ * to a still-pending event (already seen, paused, archived, or deleted) and any showing insight
+ * text after the user turned that option off.
+ */
+export function staleNotificationIds(presented: PresentedNotification[], pendingEventIds: Set<string>, showInsightText: boolean): string[] {
+  return presented
+    .filter(({ eventId, body }) => !eventId || !pendingEventIds.has(eventId) || (!showInsightText && body !== GENERIC_NOTIFICATION.body))
+    .map(({ identifier }) => identifier);
+}
+
 export function shouldAskValueFeedback(shownCount: number): boolean {
   return shownCount === 1 || shownCount % 3 === 0;
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { localDay, planNotifications } from "../src/domain";
+import { GENERIC_NOTIFICATION, localDay, planNotifications, staleNotificationIds } from "../src/domain";
 import { calendarDaysAfter, harness, local } from "./harness";
 
 // A zone with daylight-saving changes, where local midnight differs from UTC midnight.
@@ -310,5 +310,26 @@ test("snoozing an inactive insight, or to a time in the past, does nothing", asy
     const [before] = h.pending("insight-b");
     assert.equal(await h.store.snoozeInsight("insight-b", local(2026, 9, 1)), false);
     assert.deepEqual(h.pending("insight-b"), [before]);
+  } finally { h.close(); }
+});
+
+test("delivered notifications are removed once their insight is seen, paused, archived or deleted, or text is turned off", async () => {
+  const h = harness(local(2026, 10, 1));
+  try {
+    for (const name of ["seen", "paused", "deleted", "waiting"]) await h.store.insertInsight(`insight-${name}`, name, null, null);
+    const eventOf = (name: string) => h.pending(`insight-${name}`)[0]!.id;
+    const delivered = ["seen", "paused", "deleted", "waiting"].map((name) => ({ identifier: `n-${name}`, eventId: eventOf(name), body: GENERIC_NOTIFICATION.body }));
+    h.setClock(local(2026, 10, 2, 10));
+    await h.store.markShown(eventOf("seen"));
+    await h.store.setInsightStatus("insight-paused", "paused");
+    await h.store.deleteInsightRow("insight-deleted");
+
+    const pending = new Set((await h.store.notificationCandidates()).map((candidate) => candidate.id));
+    assert.deepEqual(staleNotificationIds(delivered, pending, false), ["n-seen", "n-paused", "n-deleted"]);
+
+    const personal = { identifier: "n-personal", eventId: eventOf("waiting"), body: "waiting" };
+    assert.deepEqual(staleNotificationIds([personal], pending, true), [], "kept while insight text is allowed");
+    assert.deepEqual(staleNotificationIds([personal], pending, false), ["n-personal"], "removed once insight text is turned off");
+    assert.deepEqual(staleNotificationIds([{ identifier: "n-foreign", eventId: null, body: "x" }], pending, true), ["n-foreign"]);
   } finally { h.close(); }
 });

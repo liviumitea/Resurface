@@ -1,5 +1,5 @@
 import * as Notifications from "expo-notifications";
-import { GENERIC_NOTIFICATION, planNotifications, type Settings } from "./domain";
+import { planNotifications, staleNotificationIds, type Settings } from "./domain";
 import { clearFutureNotificationPlans, notificationCandidates, setNotificationPlan } from "./storage";
 
 Notifications.setNotificationHandler({
@@ -43,13 +43,13 @@ export async function reconcileNotifications(settings: Settings, clock = new Dat
  * something already seen, paused, archived, or deleted, or carry insight text the user turned off.
  */
 async function dismissStaleNotifications(pendingEventIds: Set<string>, settings: Settings): Promise<void> {
-  for (const notification of await Notifications.getPresentedNotificationsAsync()) {
-    const { data, body } = notification.request.content;
-    const eventId = typeof data?.eventId === "string" ? data.eventId : null;
-    const personal = body !== GENERIC_NOTIFICATION.body;
-    if (!eventId || !pendingEventIds.has(eventId) || (personal && !settings.showInsightText)) {
-      await Notifications.dismissNotificationAsync(notification.request.identifier);
-    }
+  const presented = (await Notifications.getPresentedNotificationsAsync()).map(({ request }) => ({
+    identifier: request.identifier,
+    eventId: typeof request.content.data?.eventId === "string" ? request.content.data.eventId : null,
+    body: request.content.body,
+  }));
+  for (const identifier of staleNotificationIds(presented, pendingEventIds, settings.showInsightText)) {
+    await Notifications.dismissNotificationAsync(identifier);
   }
 }
 
