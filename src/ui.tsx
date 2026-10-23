@@ -15,11 +15,13 @@ export function Screen({ children, scroll = true }: PropsWithChildren<{ scroll?:
 }
 
 export function Eyebrow({ children }: PropsWithChildren) {
-  return <Text style={styles.eyebrow}>{children}</Text>;
+  return <Text maxFontSizeMultiplier={1.6} style={styles.eyebrow}>{children}</Text>;
 }
 
 export function Title({ children }: PropsWithChildren) {
-  return <Text style={styles.title}>{children}</Text>;
+  // Display sizes are capped so large accessibility text stays readable without breaking words;
+  // body text keeps scaling fully.
+  return <Text accessibilityRole="header" maxFontSizeMultiplier={1.4} style={styles.title}>{children}</Text>;
 }
 
 export function Body({ children, muted = false }: PropsWithChildren<{ muted?: boolean }>) {
@@ -57,7 +59,7 @@ export function Header({ title, back, right }: { title: string; back?: () => voi
   return (
     <View style={styles.header}>
       <View style={styles.headerSide}>{back && <IconButton icon="arrow-back" label="Back" onPress={back} />}</View>
-      <Text style={styles.headerTitle}>{title}</Text>
+      <Text accessibilityRole="header" maxFontSizeMultiplier={1.6} style={styles.headerTitle}>{title}</Text>
       <View style={[styles.headerSide, styles.headerRight]}>{right}</View>
     </View>
   );
@@ -69,14 +71,14 @@ export function BottomNav({ active, onToday, onCapture, onLibrary }: { active: "
       <View style={styles.nav}>
         <Pressable accessibilityRole="tab" accessibilityState={{ selected: active === "today" }} onPress={onToday} style={styles.navItem}>
           <Ionicons name={active === "today" ? "sunny" : "sunny-outline"} size={23} color={active === "today" ? palette.accentDark : palette.muted} />
-          <Text style={[styles.navLabel, active === "today" && styles.navActive]}>Today</Text>
+          <Text maxFontSizeMultiplier={1.4} style={[styles.navLabel, active === "today" && styles.navActive]}>Today</Text>
         </Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel="Save an insight" onPress={onCapture} style={styles.addButton}>
           <Ionicons name="add" size={28} color={palette.paper} />
         </Pressable>
         <Pressable accessibilityRole="tab" accessibilityState={{ selected: active === "library" }} onPress={onLibrary} style={styles.navItem}>
           <Ionicons name={active === "library" ? "albums" : "albums-outline"} size={23} color={active === "library" ? palette.accentDark : palette.muted} />
-          <Text style={[styles.navLabel, active === "library" && styles.navActive]}>Library</Text>
+          <Text maxFontSizeMultiplier={1.4} style={[styles.navLabel, active === "library" && styles.navActive]}>Library</Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -103,13 +105,13 @@ export const styles = StyleSheet.create({
   actionText: { color: palette.ink, fontSize: 15, fontWeight: "700" },
   primaryText: { color: palette.paper },
   dangerText: { color: palette.danger },
-  iconButton: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: palette.soft },
-  header: { height: 56, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginHorizontal: 20 },
+  iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: palette.soft },
+  header: { minHeight: 56, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginHorizontal: 20 },
   headerSide: { width: 80, alignItems: "flex-start" },
   headerRight: { alignItems: "flex-end" },
   headerTitle: { color: palette.ink, fontSize: 17, fontWeight: "700" },
   navSafe: { backgroundColor: palette.paper, borderTopWidth: 1, borderTopColor: palette.border },
-  nav: { height: 68, flexDirection: "row", justifyContent: "space-around", alignItems: "center" },
+  nav: { minHeight: 68, paddingVertical: 6, flexDirection: "row", justifyContent: "space-around", alignItems: "center" },
   navItem: { minWidth: 76, alignItems: "center", gap: 3 },
   navLabel: { color: palette.muted, fontSize: 11, fontWeight: "600" },
   navActive: { color: palette.accentDark },
