@@ -4,7 +4,7 @@ Jira-ready draft, 23 October 2026. [Product Spec v0.2](https://alexadima.atlassi
 
 Priority: **P0** before external beta, **P1** for a durable and useful v1, **P2** after beta evidence. Create one Jira epic per section and one child story/task per numbered item. Each item below includes its acceptance gate.
 
-Jira epics: [core loop](https://alexadima.atlassian.net/browse/SCRUM-23), [data safety](https://alexadima.atlassian.net/browse/SCRUM-25), [resurfacing](https://alexadima.atlassian.net/browse/SCRUM-24), [capture](https://alexadima.atlassian.net/browse/SCRUM-28), [pilot/release](https://alexadima.atlassian.net/browse/SCRUM-27), and [optional sync](https://alexadima.atlassian.net/browse/SCRUM-26). Their 22 child tasks are SCRUM-29 through SCRUM-50. Existing architecture decisions remain in SCRUM-21 and SCRUM-22; they were not duplicated.
+Jira epics: [core loop](https://alexadima.atlassian.net/browse/SCRUM-23), [data safety](https://alexadima.atlassian.net/browse/SCRUM-25), [resurfacing](https://alexadima.atlassian.net/browse/SCRUM-24), [capture](https://alexadima.atlassian.net/browse/SCRUM-28), [pilot/release](https://alexadima.atlassian.net/browse/SCRUM-27), and [optional sync](https://alexadima.atlassian.net/browse/SCRUM-26). Their 22 planned child tasks are SCRUM-29 through SCRUM-50; [SCRUM-51](https://alexadima.atlassian.net/browse/SCRUM-51) tracks a reflection-note bug found during implementation. Existing architecture decisions remain in SCRUM-21 and SCRUM-22; they were not duplicated.
 
 ## Epic 1 — Reliable core loop (P0)
 
