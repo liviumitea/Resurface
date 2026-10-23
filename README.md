@@ -5,7 +5,7 @@ Resurface is a local-first iOS and Android beta for saving personal insights and
 ## What is built
 
 - Three-step onboarding, ending only after the first successful save.
-- Text, camera, and photo-library capture. On-device OCR produces editable text while retaining the photo; photo-only insights work too.
+- A `+` capture selector for writing, taking a photo, or choosing a photo. On-device OCR produces editable text while retaining the photo; photo-only insights work too.
 - A Today queue ordered by oldest due date, with configurable limits of 1, 3, or 5 insights per day.
 - Reflection responses (`Yes`, `Not right now`, `Not anymore`), optional notes, and occasional value feedback.
 - Searchable Library, detail/history, editing, pause/resume, archive/restore, and permanent deletion.

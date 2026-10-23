@@ -20,7 +20,7 @@ import {
 import { palette } from "./src/theme";
 import { Action, Body, BottomNav, Eyebrow, Header, IconButton, Screen, Surface, Title } from "./src/ui";
 
-type Route = "onboarding" | "capture" | "photo" | "saved" | "permission" | "today" | "reflect" | "library" | "detail" | "settings";
+type Route = "onboarding" | "capture-choice" | "capture" | "photo" | "saved" | "permission" | "today" | "reflect" | "library" | "detail" | "settings";
 type CaptureOrigin = "onboarding" | "today" | "library";
 
 function formatDate(value: string): string {
@@ -186,6 +186,16 @@ function ResurfaceApp() {
     setRoute("capture");
   };
 
+  const openCaptureChoice = (origin: CaptureOrigin) => {
+    setCaptureOrigin(origin);
+    setRoute("capture-choice");
+  };
+
+  const cancelCaptureChoice = () => {
+    if (captureOrigin === "library") goLibrary();
+    else void goToday();
+  };
+
   const pickImage = async (source: "camera" | "library") => {
     try {
       const options: ImagePicker.ImagePickerOptions = { mediaTypes: ["images"], quality: 1 };
@@ -200,6 +210,11 @@ function ResurfaceApp() {
     } catch {
       Alert.alert("Photo unavailable", "Allow camera or photo access in your device settings, then try again.");
     }
+  };
+
+  const chooseCapture = (source: "write" | "camera" | "library") => {
+    beginCapture(captureOrigin);
+    if (source !== "write") void pickImage(source);
   };
 
   const extractPhotoText = async () => {
@@ -378,6 +393,16 @@ function ResurfaceApp() {
       </View>
     </Screen>}
 
+    {route === "capture-choice" && <Screen>
+      <Header title="Capture" back={cancelCaptureChoice} />
+      <Eyebrow>Save what matters</Eyebrow><Title>How would you like to capture it?</Title>
+      <Body muted>Start with your own words or keep a photo. You can edit before saving.</Body>
+      <View style={screenStyles.gap24}><Action label="Write" icon="create-outline" onPress={() => chooseCapture("write")} /></View>
+      <View style={screenStyles.gap12}><Action kind="secondary" label="Take photo" icon="camera-outline" onPress={() => chooseCapture("camera")} /></View>
+      <View style={screenStyles.gap12}><Action kind="secondary" label="Choose photo" icon="images-outline" onPress={() => chooseCapture("library")} /></View>
+      <View style={screenStyles.gap12}><Action kind="ghost" label="Cancel" onPress={cancelCaptureChoice} /></View>
+    </Screen>}
+
     {route === "capture" && <Screen>
       <Header title="Save an insight" back={() => { deletePickedImageFromCache(captureImageUri); setCaptureImageUri(null); if (captureOrigin === "onboarding") setRoute("onboarding"); else if (captureOrigin === "library") goLibrary(); else void goToday(); }} />
       <Eyebrow>Capture</Eyebrow><Title>What do you want to remember?</Title>
@@ -426,7 +451,7 @@ function ResurfaceApp() {
             <Pressable accessibilityRole="button" onPress={() => { void openDetail(current.insight.id, "today"); }}><Text style={screenStyles.textLink}>View insight and history</Text></Pressable>
           </>}
       </ScrollView>
-      <BottomNav active="today" onToday={() => { void goToday(); }} onCapture={() => beginCapture("today")} onLibrary={goLibrary} />
+      <BottomNav active="today" onToday={() => { void goToday(); }} onCapture={() => openCaptureChoice("today")} onLibrary={goLibrary} />
     </Screen>}
 
     {route === "reflect" && current && <Screen>
@@ -447,7 +472,7 @@ function ResurfaceApp() {
         {libraryItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="albums-outline" size={36} color={palette.accentDark} /><Text style={screenStyles.emptyTitle}>{librarySearch ? "No matching insights." : `No ${libraryStatus} insights.`}</Text><Body muted>What you save will be here whenever you need it.</Body></Surface>
           : libraryItems.map((insight) => <Pressable key={insight.id} accessibilityRole="button" onPress={() => { void openDetail(insight.id); }} style={screenStyles.libraryRow}><View style={screenStyles.libraryIcon}><Ionicons name={insight.imagePath ? "image-outline" : "bookmark-outline"} size={19} color={palette.accentDark} /></View><View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{insight.content || "Saved photo"}</Text><Text style={screenStyles.libraryDate}>{formatDate(insight.createdAt)}</Text></View><Ionicons name="chevron-forward" size={17} color={palette.muted} /></Pressable>)}
       </ScrollView>
-      <BottomNav active="library" onToday={() => { void goToday(); }} onCapture={() => beginCapture("library")} onLibrary={goLibrary} />
+      <BottomNav active="library" onToday={() => { void goToday(); }} onCapture={() => openCaptureChoice("library")} onLibrary={goLibrary} />
     </Screen>}
 
     {route === "detail" && detail && <Screen>

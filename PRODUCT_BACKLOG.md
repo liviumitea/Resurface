@@ -47,3 +47,10 @@ Jira epics: [core loop](https://alexadima.atlassian.net/browse/SCRUM-23), [data 
 22. **End-to-end encrypted sync (conditional).** Only if item 21 is approved: build accounts, device enrollment, encrypted records/blobs, conflict resolution, key recovery, and deletion semantics. Gate: the server cannot read personal content; cross-device and lost-device recovery are tested. No backend is needed for the current device-only beta.
 
 Out of scope until evidence changes the decision: generated advice, automatic insight extraction/tagging, social features, streaks, goals, mood tracking, and adaptive schedules.
+
+## Product Spec v0.2 traceability notes
+
+- The P0 `+` capture-type selector (Write / Take photo / Choose photo / Cancel) was added after auditing the spec on 23 October 2026. The full capture flow still needs device acceptance in SCRUM-31.
+- Today loading skeleton and recoverable retry state are still open under SCRUM-33; the current app has an initial loading screen and a fatal storage-protection screen, not the complete specified state set.
+- The spec's Account/Sign out/Delete account items are conditional on authentication. The current device-only beta has no account or backend; SCRUM-22 should record that architecture decision before account work is planned.
+- The spec calls reminders “push”; the current implementation uses local notifications. SCRUM-38 covers delivery, privacy, and deep-link acceptance on real devices.
