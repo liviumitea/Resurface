@@ -10,6 +10,7 @@ import {
   type Settings,
   type TodayItem,
 } from "./domain";
+import type { BackupContents } from "./backup";
 import {
   SELECT_NOTIFICATION_CANDIDATES_SQL, SELECT_TODAY_DUE_SQL, SELECT_TODAY_EXISTING_SQL,
 } from "./storage-queries";
@@ -268,7 +269,48 @@ export function createStore({ db, id, now }: StoreDependencies) {
     await track("notification_scheduled");
   }
 
+  async function exportRows(): Promise<Omit<BackupContents, "exportedAt" | "photos">> {
+    const settings = await getSettings();
+    return {
+      insights: await db().getAllAsync<Insight>("SELECT * FROM insights ORDER BY createdAt, id"),
+      events: await db().getAllAsync<ResurfaceEvent>("SELECT * FROM events ORDER BY scheduledAt, id"),
+      reflections: await db().getAllAsync<Reflection>("SELECT * FROM reflections ORDER BY createdAt, id"),
+      settings: { dailyCap: settings.dailyCap, notificationTime: settings.notificationTime, showInsightText: settings.showInsightText },
+    };
+  }
+
+  /**
+   * Replaces every insight, event, and reflection in one transaction; any failure leaves the
+   * current data untouched. Notification plans are device-specific, so they are dropped and the
+   * caller reconciles them. `imagePaths` maps insight IDs to their newly written photo files.
+   */
+  async function replaceAllRows(contents: Omit<BackupContents, "exportedAt" | "photos">, imagePaths: Record<string, string>): Promise<void> {
+    await db().withTransactionAsync(async () => {
+      await db().runAsync("DELETE FROM reflections");
+      await db().runAsync("DELETE FROM events");
+      await db().runAsync("DELETE FROM insights");
+      for (const insight of contents.insights) {
+        const imagePath = insight.imagePath === null ? null : imagePaths[insight.id];
+        if (imagePath === undefined) throw new Error("A restored photo is missing.");
+        await db().runAsync(
+          "INSERT INTO insights (id, content, context, imagePath, imageMime, status, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          insight.id, insight.content, insight.context, imagePath, insight.imageMime, insight.status, insight.createdAt, insight.updatedAt,
+        );
+      }
+      for (const event of contents.events) {
+        await insertEvent({ ...event, notificationId: null, notificationPlannedFor: null });
+      }
+      for (const reflection of contents.reflections) {
+        await db().runAsync("INSERT INTO reflections (id, insightId, eventId, content, createdAt) VALUES (?, ?, ?, ?, ?)",
+          reflection.id, reflection.insightId, reflection.eventId, reflection.content, reflection.createdAt);
+      }
+      await saveSettings({ ...contents.settings, onboardingComplete: true });
+      await track("backup_restored");
+    });
+  }
+
   return {
+    exportRows, replaceAllRows,
     track, getSettings, saveSettings, insertInsight, countInsights, listInsights, getInsight, getEvent,
     getDetail, selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus,
     editInsight, deleteInsightRow, saveValueFeedback, getShownCount, getBetaMetrics,
