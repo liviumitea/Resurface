@@ -3,7 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
 import { extractTextFromImage, isSupported as isOcrSupported } from "expo-text-extractor";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
   StyleSheet, Switch, Text, TextInput, View,
@@ -22,6 +22,7 @@ import { Action, Body, BottomNav, Eyebrow, Header, IconButton, Screen, Surface, 
 
 type Route = "onboarding" | "capture-choice" | "capture" | "photo" | "saved" | "permission" | "today" | "reflect" | "library" | "detail" | "settings";
 type CaptureOrigin = "onboarding" | "today" | "library";
+type TodayStatus = "loading" | "ready" | "error";
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
@@ -55,9 +56,27 @@ function Loading({ message = "Making space for what matters…" }: { message?: s
   return <Screen scroll={false}><View style={screenStyles.center}><View style={screenStyles.loadingMark}><Ionicons name="sparkles" size={34} color={palette.accentDark} /></View><Text style={screenStyles.loadingText}>{message}</Text></View></Screen>;
 }
 
+function TodaySkeleton() {
+  return (
+    <View accessible accessibilityRole="progressbar" accessibilityLabel="Loading today's insights">
+      <View style={[screenStyles.skeletonLine, { width: "55%" }]} />
+      <Surface style={screenStyles.insightCard}>
+        <View style={screenStyles.cardMark} />
+        <View style={[screenStyles.skeletonLine, screenStyles.skeletonLarge]} />
+        <View style={[screenStyles.skeletonLine, screenStyles.skeletonLarge, { width: "70%" }]} />
+        <View style={[screenStyles.skeletonLine, { width: "35%", marginTop: 22 }]} />
+      </Surface>
+      <View style={[screenStyles.skeletonButton, screenStyles.gap24]} />
+    </View>
+  );
+}
+
 function ResurfaceApp() {
   const [ready, setReady] = useState(false);
   const [fatalError, setFatalError] = useState<string | null>(null);
+  const [startAttempt, setStartAttempt] = useState(0);
+  const [todayStatus, setTodayStatus] = useState<TodayStatus>("loading");
+  const todayRequest = useRef(0);
   const [busy, setBusy] = useState(false);
   const [route, setRoute] = useState<Route>("onboarding");
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -90,15 +109,27 @@ function ResurfaceApp() {
     Alert.alert("Resurface", message);
   };
 
+  // Today owns its loading and error states so a failed query is retryable in place
+  // instead of an alert over stale cards. Only the latest request may update the screen.
   const goToday = useCallback(async (eventId?: string) => {
-    const items = await selectToday();
-    setTodayItems(items);
-    const requestedIndex = eventId ? items.findIndex((item) => item.event.id === eventId) : -1;
-    const firstIncomplete = items.findIndex((item) => !item.event.completedAt);
-    setTodayIndex(requestedIndex >= 0 ? requestedIndex : firstIncomplete >= 0 ? firstIncomplete : items.length);
-    setInsightCount(await countInsights());
+    const request = ++todayRequest.current;
+    setTodayStatus("loading");
     setRoute("today");
-    return !eventId || requestedIndex >= 0;
+    try {
+      const items = await selectToday();
+      const count = await countInsights();
+      if (request !== todayRequest.current) return true;
+      setTodayItems(items);
+      const requestedIndex = eventId ? items.findIndex((item) => item.event.id === eventId) : -1;
+      const firstIncomplete = items.findIndex((item) => !item.event.completedAt);
+      setTodayIndex(requestedIndex >= 0 ? requestedIndex : firstIncomplete >= 0 ? firstIncomplete : items.length);
+      setInsightCount(count);
+      setTodayStatus("ready");
+      return !eventId || requestedIndex >= 0;
+    } catch {
+      if (request === todayRequest.current) setTodayStatus("error");
+      return true;
+    }
   }, []);
 
   const goLibrary = useCallback(() => setRoute("library"), []);
@@ -161,16 +192,22 @@ function ResurfaceApp() {
       if (eventId) void handleNotification(eventId).catch(report);
     });
     return () => { live = false; listener.remove(); };
-  }, [goToday, handleNotification]);
+  }, [goToday, handleNotification, startAttempt]);
+
+  const retryStart = () => {
+    setFatalError(null);
+    setReady(false);
+    setStartAttempt((attempt) => attempt + 1);
+  };
 
   const current = todayItems[todayIndex];
   useEffect(() => {
-    if (route !== "today" || !current || current.event.shownAt) return;
+    if (route !== "today" || todayStatus !== "ready" || !current || current.event.shownAt) return;
     void markShown(current.event.id).then(async () => {
       setTodayItems((items) => items.map((item) => item.event.id === current.event.id ? { ...item, event: { ...item.event, shownAt: new Date().toISOString() } } : item));
       if (settings) await reconcileNotifications(settings);
     }).catch(report);
-  }, [route, current?.event.id, current?.event.shownAt, settings]);
+  }, [route, todayStatus, current?.event.id, current?.event.shownAt, settings]);
 
   useEffect(() => {
     if (route !== "library") return;
@@ -364,7 +401,7 @@ function ResurfaceApp() {
   };
 
   if (!ready) return <Loading />;
-  if (fatalError) return <Screen><Eyebrow>Unable to open</Eyebrow><Title>Your insights are still protected.</Title><Body>{fatalError}</Body><View style={screenStyles.gap24}><Body muted>Resurface will not reset an encrypted database when its key is unavailable.</Body></View></Screen>;
+  if (fatalError) return <Screen><Eyebrow>Unable to open</Eyebrow><Title>Your insights are still protected.</Title><Body>{fatalError}</Body><View style={screenStyles.gap24}><Body muted>Resurface will not reset an encrypted database when its key is unavailable. If your device was just restarted, unlock it and try again.</Body></View><View style={screenStyles.gap24}><Action label="Try again" icon="refresh" onPress={retryStart} /></View></Screen>;
   if (!settings) return <Loading />;
 
   const onboarding = [
@@ -440,7 +477,9 @@ function ResurfaceApp() {
       <ScrollView contentContainerStyle={screenStyles.todayContent}>
         <Eyebrow>{new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</Eyebrow>
         <Title>Today</Title>
-        {todayItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name={insightCount === 0 ? "bookmark-outline" : "sunny-outline"} size={36} color={palette.accentDark} /><Text style={screenStyles.emptyTitle}>{insightCount === 0 ? "Nothing here yet." : "Nothing to resurface today."}</Text><Body muted>{insightCount === 0 ? "Save something you don't want to lose." : "Some things are better remembered after a little time has passed."}</Body><View style={screenStyles.gap24}><Action label={insightCount === 0 ? "Save your first insight" : "Save something"} onPress={() => beginCapture("today")} /></View></Surface>
+        {todayStatus === "loading" ? <TodaySkeleton />
+          : todayStatus === "error" ? <Surface style={screenStyles.emptyCard}><Ionicons name="cloud-offline-outline" size={36} color={palette.accentDark} /><Text style={screenStyles.emptyTitle}>Today couldn't load.</Text><Body muted>Your insights are still saved on this device. Nothing was changed or reset.</Body><View style={screenStyles.gap24}><Action label="Try again" icon="refresh" onPress={() => { void goToday(); }} /></View><View style={screenStyles.gap12}><Action kind="ghost" label="Open Library" onPress={goLibrary} /></View></Surface>
+          : todayItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name={insightCount === 0 ? "bookmark-outline" : "sunny-outline"} size={36} color={palette.accentDark} /><Text style={screenStyles.emptyTitle}>{insightCount === 0 ? "Nothing here yet." : "Nothing to resurface today."}</Text><Body muted>{insightCount === 0 ? "Save something you don't want to lose." : "Some things are better remembered after a little time has passed."}</Body><View style={screenStyles.gap24}><Action label={insightCount === 0 ? "Save your first insight" : "Save something"} onPress={() => beginCapture("today")} /></View></Surface>
           : todayIndex >= todayItems.length ? <Surface style={screenStyles.emptyCard}><Ionicons name="checkmark-circle-outline" size={38} color={palette.accentDark} /><Text style={screenStyles.emptyTitle}>That's all for today.</Text><Body muted>We'll bring more back when the time is right.</Body><View style={screenStyles.gap24}><Action kind="secondary" label="Save something" onPress={() => beginCapture("today")} /></View></Surface>
           : current && <>
             <Text style={screenStyles.subtitle}>{todayItems.length} {todayItems.length === 1 ? "thing" : "things"} worth remembering</Text>
@@ -544,6 +583,8 @@ const screenStyles = StyleSheet.create({
   cardText: { color: palette.ink, fontSize: 25, lineHeight: 35, fontWeight: "600", letterSpacing: -0.6 }, cardTextCompact: { color: palette.ink, fontSize: 20, lineHeight: 29, fontWeight: "600" },
   savedDate: { color: palette.muted, fontSize: 12, marginTop: 22 }, context: { color: palette.muted, fontSize: 15, lineHeight: 23, marginTop: 18 },
   image: { width: "100%", marginTop: 18, borderRadius: 12 }, imagePlaceholder: { width: "100%", marginTop: 18, backgroundColor: palette.soft, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  skeletonLine: { height: 14, borderRadius: 7, backgroundColor: palette.soft, marginBottom: 12 }, skeletonLarge: { height: 24, borderRadius: 9 },
+  skeletonButton: { height: 52, borderRadius: 15, backgroundColor: palette.soft },
   emptyCard: { alignItems: "flex-start", marginTop: 18, gap: 12 }, emptyTitle: { color: palette.ink, fontSize: 22, fontWeight: "700", marginTop: 12 },
   textLink: { color: palette.accentDark, fontWeight: "700", textAlign: "center", padding: 20 },
   libraryTop: { paddingHorizontal: 24 }, search: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.border, borderRadius: 15, height: 50, paddingHorizontal: 14, color: palette.ink, marginTop: 8 },

@@ -51,6 +51,6 @@ Out of scope until evidence changes the decision: generated advice, automatic in
 ## Product Spec v0.2 traceability notes
 
 - The P0 `+` capture-type selector (Write / Take photo / Choose photo / Cancel) was added after auditing the spec on 23 October 2026. The full capture flow still needs device acceptance in SCRUM-31.
-- Today loading skeleton and recoverable retry state are still open under SCRUM-33; the current app has an initial loading screen and a fatal storage-protection screen, not the complete specified state set.
+- SCRUM-33 (code complete, device acceptance pending): Today now has loading skeleton, ready, and recoverable error/“Try again” states (with a Library fallback); a stale request cannot overwrite a newer one, and a card is only marked shown once Today has loaded. The fatal storage screen offers a non-destructive retry. A missing database key next to an existing database now stops startup instead of generating a replacement key. Still to verify on device: skeleton/error rendering, retry after a forced query failure, and the locked-device/key-unavailable path.
 - The spec's Account/Sign out/Delete account items are conditional on authentication. The current device-only beta has no account or backend; SCRUM-22 should record that architecture decision before account work is planned.
 - The spec calls reminders “push”; the current implementation uses local notifications. SCRUM-38 covers delivery, privacy, and deep-link acceptance on real devices.

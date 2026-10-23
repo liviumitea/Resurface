@@ -1,4 +1,5 @@
 import * as Crypto from "expo-crypto";
+import { File, Paths } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 import {
@@ -20,6 +21,7 @@ import {
 } from "./storage-queries";
 
 const DATABASE_KEY_NAME = "resurface.database-key.v1";
+const DATABASE_NAME = "resurface.db";
 const DEFAULT_SETTINGS: Settings = {
   dailyCap: 3,
   notificationTime: "09:00",
@@ -43,6 +45,12 @@ function id(): string {
 async function databaseKey(): Promise<string> {
   const existing = await SecureStore.getItemAsync(DATABASE_KEY_NAME);
   if (existing) return existing;
+  // A missing key next to an existing database means the key is unavailable or lost.
+  // Generating a replacement would overwrite any key that reappears, so stop instead.
+  // expo-sqlite keeps databases in <documents>/SQLite on both iOS and Android.
+  if (new File(Paths.document, "SQLite", DATABASE_NAME).exists) {
+    throw new Error("The database key is unavailable on this device. Your data has not been reset.");
+  }
   const bytes = await Crypto.getRandomBytesAsync(32);
   const key = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   await SecureStore.setItemAsync(DATABASE_KEY_NAME, key);
@@ -52,7 +60,7 @@ async function databaseKey(): Promise<string> {
 export async function openStorage(): Promise<void> {
   if (database) return;
   const key = await databaseKey();
-  const connection = await SQLite.openDatabaseAsync("resurface.db");
+  const connection = await SQLite.openDatabaseAsync(DATABASE_NAME);
   try {
     // The key is generated as hex, so it cannot escape the PRAGMA string literal.
     await connection.execAsync(`PRAGMA key = '${key}';`);
