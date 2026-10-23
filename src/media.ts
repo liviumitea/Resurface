@@ -3,6 +3,7 @@ import { Directory, File, Paths } from "expo-file-system";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as SecureStore from "expo-secure-store";
 import { fromByteArray } from "base64-js";
+import { BACKUP_EXTENSION } from "./backup";
 
 const IMAGE_KEY_NAME = "resurface.image-key.v1";
 
@@ -85,6 +86,25 @@ export function deleteEncryptedImage(encryptedPath: string | null): void {
   if (!encryptedPath) return;
   const file = new File(encryptedPath);
   if (file.exists) file.delete();
+}
+
+/**
+ * Native pickers and the image manipulator keep plaintext copies in these cache folders, and a
+ * backup file waiting for the share sheet sits in the cache root. Capture drafts and pending
+ * shares never survive a restart, so anything left there at launch is safe to remove.
+ */
+export function clearTransientCaches(): void {
+  for (const name of ["ImagePicker", "ImageManipulator", "DocumentPicker"]) {
+    try {
+      const directory = new Directory(Paths.cache, name);
+      if (directory.exists) directory.delete();
+    } catch { /* Best effort; the OS may also purge caches. */ }
+  }
+  try {
+    for (const entry of new Directory(Paths.cache).list()) {
+      if (entry instanceof File && entry.name.endsWith(`.${BACKUP_EXTENSION}`)) entry.delete();
+    }
+  } catch { /* Best effort; backup files contain only ciphertext. */ }
 }
 
 /** The picker may leave a plaintext copy in our own cache; never touch external files. */

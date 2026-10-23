@@ -53,6 +53,18 @@ npx expo export --platform ios --output-dir /tmp/resurface-ios-export
 npx expo export --platform android --output-dir /tmp/resurface-android-export
 ```
 
+## Privacy and deletion review (23 October 2026, code review only)
+
+- **Personal content at rest:** text, reflections, history, settings and counters are in the SQLCipher database (deleted rows and the WAL stay encrypted); photos are AES-GCM ciphertext files. Both keys are in Keychain/Keystore via SecureStore.
+- **Plaintext copies:** the image picker, image manipulator and document picker write plaintext copies to `cache/ImagePicker`, `cache/ImageManipulator` and `cache/DocumentPicker`. The app deletes its copy after each save or cancel and clears those folders, plus any leftover backup file, on every launch. Copies the OS makes (photo library, iCloud Photos, Files) are outside the app and are not touched.
+- **OCR:** runs on device and writes no files.
+- **Logs and counters:** the app logs nothing to the console. Counters are a fixed name plus a time, never content (enforced by `tests/metrics.test.ts`), and never leave the device.
+- **Notifications:** generic text by default. Each reconcile removes delivered notifications for insights that were already seen, paused, archived or deleted, and any that show insight text after that option is turned off.
+- **Permanent delete:** removes the insight row, its events and reflections (cascade) and its photo file. A backup file the user already saved elsewhere is not affected.
+- **Backups:** only ciphertext is written to the cache, and it is deleted after the share sheet closes. A forgotten backup password cannot be recovered.
+- **OS backups:** Android `allowBackup` is off, because Keystore keys do not move to a new device and an auto-restored database could never be opened. Use the encrypted backup instead. On iOS, Documents and non-device-only Keychain items are in encrypted device backups, so a full iPhone restore should keep both. This must be verified on device (backlog item 8).
+- **Known limits:** the iOS app-switcher snapshot and screenshots can show open insights. Photo paths are stored as absolute URIs, which iOS may change on app update (verify on device). If a key is lost, the app stops without resetting data and offers retry only. Starting fresh needs a product decision.
+
 ## Validation still needed
 
 The TypeScript checks, domain/database-query tests, Expo Doctor, and both platform JavaScript exports pass. `tests/lifecycle.test.ts` runs the production store (`src/store.ts`) and schema against in-memory SQLite with a controllable clock in a daylight-saving time zone, covering every scheduling rule above, including the cap, overdue order, local-day boundary, restart, pause/archive/resume, each reflection response, and notification planning limits. SQLCipher itself, native photo crypto, and OS notification delivery are not exercised by these tests. On 23 October 2026, `npm run ios` built successfully from the `Proiect Alexandra` path, and the iOS 27 simulator launched through Metro to the Today screen with an existing encrypted insight. This is a startup smoke test, **not** full device acceptance. Distribution signing and physical-device acceptance tests have **not** been completed. Before distributing the beta, verify SQLCipher read/write and key loss behavior, AES-GCM photo round trips, OCR quality, app restarts, notification delivery/deep links while backgrounded or terminated, accessibility, and the complete first-save flow on both platforms. Confirm bundle identifiers and signing credentials before store submission.

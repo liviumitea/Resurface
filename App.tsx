@@ -14,7 +14,7 @@ import {
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { BackupError, MIN_BACKUP_PASSWORD_LENGTH } from "./src/backup";
 import { isValidInsight, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
-import { deletePickedImageFromCache, imageDataUri } from "./src/media";
+import { clearTransientCaches, deletePickedImageFromCache, imageDataUri } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
   countInsights, createBackupFile, createInsight, deleteCachedFile, deleteInsight, editInsight, getBetaMetrics, getDetail,
@@ -179,6 +179,7 @@ function ResurfaceApp() {
     let live = true;
     (async () => {
       try {
+        clearTransientCaches();
         await openStorage();
         const nextSettings = await getSettings();
         if (!live) return;

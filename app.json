@@ -16,6 +16,7 @@
     },
     "android": {
       "package": "app.resurface.mobile",
+      "allowBackup": false,
       "permissions": [
         "POST_NOTIFICATIONS"
       ]
