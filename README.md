@@ -1,5 +1,7 @@
 # Resurface
 
+For the current state, verification limits, Jira links, and next implementation steps, see [CLAUDE_HANDOFF.md](CLAUDE_HANDOFF.md).
+
 Resurface is a local-first iOS and Android beta for saving personal insights and bringing them back over time. The app implements the product's v0.2 core loop: capture → resurface → reflect → continue.
 
 ## What is built
