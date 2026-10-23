@@ -44,7 +44,8 @@
             "enableSceneSupport": true
           }
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "experiments": {
       "tsconfigPaths": true

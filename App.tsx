@@ -1,4 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as DocumentPicker from "expo-document-picker";
+import { File } from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import { StatusBar } from "expo-status-bar";
 import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
@@ -9,13 +12,14 @@ import {
   StyleSheet, Switch, Text, TextInput, View,
 } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { BackupError, MIN_BACKUP_PASSWORD_LENGTH } from "./src/backup";
 import { isValidInsight, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
 import { deletePickedImageFromCache, imageDataUri } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
-  countInsights, createInsight, deleteInsight, editInsight, getBetaMetrics, getDetail,
+  countInsights, createBackupFile, createInsight, deleteCachedFile, deleteInsight, editInsight, getBetaMetrics, getDetail,
   getEvent, getInsight, getSettings, getShownCount, listInsights, markCompleted, markOpened, markShown,
-  openStorage, respondToEvent, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
+  openStorage, respondToEvent, restoreBackup, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
 } from "./src/storage";
 import { palette } from "./src/theme";
 import { Action, Body, BottomNav, Eyebrow, Header, IconButton, Screen, Surface, Title } from "./src/ui";
@@ -113,6 +117,11 @@ function ResurfaceApp() {
   const [pendingNextIndex, setPendingNextIndex] = useState(0);
   const [metrics, setMetrics] = useState<{ saved: number; shown: number; answered: number; valuable: number } | null>(null);
   const [notificationGranted, setNotificationGranted] = useState<boolean | null>(null);
+  const [backupMode, setBackupMode] = useState<"create" | "restore" | null>(null);
+  const [backupPassword, setBackupPassword] = useState("");
+  const [backupConfirm, setBackupConfirm] = useState("");
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [restoreText, setRestoreText] = useState<string | null>(null);
 
   const report = (error: unknown) => {
     const message = error instanceof Error ? error.message : "Something went wrong. Please try again.";
@@ -416,6 +425,77 @@ function ResurfaceApp() {
     } catch (error) { report(error); }
   };
 
+  const openBackupSheet = (mode: "create" | "restore") => {
+    setBackupPassword("");
+    setBackupConfirm("");
+    setBackupMode(mode);
+  };
+
+  const closeBackupSheet = () => {
+    if (backupBusy) return;
+    setBackupMode(null);
+    setBackupPassword("");
+    setBackupConfirm("");
+    setRestoreText(null);
+  };
+
+  const backupMessage = (error: unknown) =>
+    error instanceof BackupError ? error.message : "Something went wrong. Nothing on this device was changed.";
+
+  const createBackup = async () => {
+    setBackupBusy(true);
+    let uri: string | null = null;
+    try {
+      const result = await createBackupFile(backupPassword);
+      uri = result.uri;
+      setBackupMode(null);
+      setBackupPassword("");
+      setBackupConfirm("");
+      if (!(await Sharing.isAvailableAsync())) throw new Error("Sharing isn't available on this device.");
+      await Sharing.shareAsync(result.uri, { mimeType: "application/octet-stream", UTI: "public.data", dialogTitle: "Save your Resurface backup" });
+      if (result.missingPhotos) Alert.alert("Backup created", `${result.missingPhotos} photo${result.missingPhotos === 1 ? " was" : "s were"} missing on this device and couldn't be included.`);
+    } catch (error) { Alert.alert("Backup not created", backupMessage(error)); }
+    finally {
+      if (uri) deleteCachedFile(uri);
+      setBackupBusy(false);
+    }
+  };
+
+  const chooseRestoreFile = () => {
+    Alert.alert("Replace everything on this device?", "Restoring a backup replaces all insights, photos, reflections and history currently in Resurface. This can't be undone.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Choose backup", style: "destructive", onPress: () => {
+        void (async () => {
+          try {
+            const picked = await DocumentPicker.getDocumentAsync({ type: "*/*", copyToCacheDirectory: true, multiple: false });
+            const asset = picked.canceled ? null : picked.assets[0];
+            if (!asset) return;
+            try { setRestoreText(await new File(asset.uri).text()); }
+            finally { deleteCachedFile(asset.uri); }
+            openBackupSheet("restore");
+          } catch { Alert.alert("Backup not opened", "That file couldn't be read. Nothing on this device was changed."); }
+        })();
+      } },
+    ]);
+  };
+
+  const restore = async () => {
+    if (!restoreText) return;
+    setBackupBusy(true);
+    try {
+      const result = await restoreBackup(restoreText, backupPassword);
+      setBackupMode(null);
+      setBackupPassword("");
+      setRestoreText(null);
+      const next = await getSettings();
+      setSettings(next);
+      try { await reconcileNotifications(next); } catch (error) { report(error); }
+      Alert.alert("Backup restored", `${result.insights} insight${result.insights === 1 ? "" : "s"} restored.`);
+      await goToday();
+    } catch (error) { Alert.alert("Backup not restored", backupMessage(error)); }
+    finally { setBackupBusy(false); }
+  };
+
   if (!ready) return <Loading />;
   if (fatalError) return <Screen><Eyebrow>Unable to open</Eyebrow><Title>Your insights are still protected.</Title><Body>{fatalError}</Body><View style={screenStyles.gap24}><Body muted>Resurface will not reset an encrypted database when its key is unavailable. If your device was just restarted, unlock it and try again.</Body></View><View style={screenStyles.gap24}><Action label="Try again" icon="refresh" onPress={retryStart} /></View></Screen>;
   if (!settings) return <Loading />;
@@ -561,10 +641,33 @@ function ResurfaceApp() {
       <Text style={screenStyles.fieldLabel}>Preferred time (24-hour HH:MM)</Text>
       <TextInput value={settings.notificationTime} onChangeText={(value) => { setSettings({ ...settings, notificationTime: value }); }} onBlur={() => { if (/^([01]\d|2[0-3]):[0-5]\d$/.test(settings.notificationTime)) void updateSettings({ notificationTime: settings.notificationTime }); else { Alert.alert("Use HH:MM", "Enter a time such as 09:00 or 18:30."); void getSettings().then(setSettings); } }} keyboardType="numbers-and-punctuation" maxLength={5} style={screenStyles.search} accessibilityLabel="Notification time" />
       <Surface style={screenStyles.switchRow}><View style={screenStyles.flex}><Text style={screenStyles.switchTitle}>Show insight text</Text><Text style={screenStyles.switchDescription}>Personal words may appear on your lock screen.</Text></View><Switch value={settings.showInsightText} onValueChange={(value) => { void updateSettings({ showInsightText: value }); }} trackColor={{ true: palette.accentDark }} /></Surface>
-      <View style={screenStyles.gap24}><Text style={screenStyles.sectionTitle}>Privacy & data</Text><Body muted>Insights, photos, reflections, and history are encrypted and kept on this device. There is no account or cloud backup yet. Removing the app or losing this device may lose your insights.</Body></View>
+      <View style={screenStyles.gap24}><Text style={screenStyles.sectionTitle}>Privacy & data</Text><Body muted>Insights, photos, reflections, and history are encrypted and kept on this device. There is no account or cloud sync. Removing the app or losing this device loses your insights unless you keep a backup.</Body></View>
+      <View style={screenStyles.gap24}><Text style={screenStyles.sectionTitle}>Backup</Text><Body muted>Create a password-protected file you can save in Files, iCloud Drive, Google Drive or anywhere else, and restore it on this or another device.</Body></View>
+      <View style={screenStyles.gap12}><Action kind="secondary" label="Create encrypted backup" icon="lock-closed-outline" onPress={() => openBackupSheet("create")} /></View>
+      <View style={screenStyles.gap12}><Action kind="ghost" label="Restore from backup" icon="download-outline" onPress={chooseRestoreFile} /></View>
       <View style={screenStyles.gap24}><Text style={screenStyles.sectionTitle}>Beta signals on this device</Text><Body muted>{metrics ? `${metrics.saved} saved · ${metrics.shown} shown · ${metrics.answered} value answers · ${metrics.valuable} marked worthwhile` : "Loading…"}</Body><Body muted>{metrics?.shown ? `${Math.round((metrics.answered / metrics.shown) * 100)}% of shown insights received a value answer.` : "Answer rate appears after the first resurfacing."}</Body><Body muted>{metrics?.answered ? `${Math.round((metrics.valuable / metrics.answered) * 100)}% of answers said a resurfacing was worthwhile.` : "Value rate appears after you answer a feedback question."}</Body></View>
       <View style={screenStyles.gap24}><Body muted>Resurface 0.1.0 · Device-only beta</Body></View>
     </Screen>}
+
+    <Modal visible={!!backupMode} transparent animationType="fade" onRequestClose={closeBackupSheet}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={screenStyles.modalBackdrop}>
+        <Surface style={screenStyles.feedbackBox}>
+          <Eyebrow>{backupMode === "create" ? "Encrypted backup" : "Restore backup"}</Eyebrow>
+          <Text style={screenStyles.feedbackTitle}>{backupMode === "create" ? "Choose a backup password." : "Enter the backup password."}</Text>
+          <Body muted>{backupMode === "create" ? "If you forget this password, the backup can't be opened. Resurface can't reset or recover it." : "Everything currently in Resurface on this device will be replaced."}</Body>
+          <TextInput secureTextEntry autoCapitalize="none" autoCorrect={false} textContentType={backupMode === "create" ? "newPassword" : "password"} placeholder="Password" placeholderTextColor={palette.muted} value={backupPassword} onChangeText={setBackupPassword} editable={!backupBusy} style={screenStyles.search} accessibilityLabel="Backup password" />
+          {backupMode === "create" && <TextInput secureTextEntry autoCapitalize="none" autoCorrect={false} textContentType="newPassword" placeholder="Repeat password" placeholderTextColor={palette.muted} value={backupConfirm} onChangeText={setBackupConfirm} editable={!backupBusy} style={screenStyles.search} accessibilityLabel="Repeat backup password" />}
+          {backupMode === "create" && backupPassword.length > 0 && backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH && <Text style={screenStyles.backupHint}>Use at least {MIN_BACKUP_PASSWORD_LENGTH} characters.</Text>}
+          {backupMode === "create" && backupConfirm.length > 0 && backupConfirm !== backupPassword && <Text style={screenStyles.backupHint}>The passwords don't match.</Text>}
+          <View style={screenStyles.gap24}>
+            {backupMode === "create"
+              ? <Action label={backupBusy ? "Encrypting… this can take a moment" : "Create backup"} disabled={backupBusy || backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH || backupPassword !== backupConfirm} onPress={() => { void createBackup(); }} />
+              : <Action kind="danger" label={backupBusy ? "Restoring…" : "Replace and restore"} disabled={backupBusy || backupPassword.length === 0} onPress={() => { void restore(); }} />}
+          </View>
+          <View style={screenStyles.gap12}><Action kind="ghost" label="Cancel" disabled={backupBusy} onPress={closeBackupSheet} /></View>
+        </Surface>
+      </KeyboardAvoidingView>
+    </Modal>
 
     <Modal visible={!!feedbackEventId} transparent animationType="fade" onRequestClose={() => { void finishFeedback(); }}>
       <View style={screenStyles.modalBackdrop}><Surface style={screenStyles.feedbackBox}><Eyebrow>A quick check-in</Eyebrow><Text style={screenStyles.feedbackTitle}>Was this worth resurfacing today?</Text><Body muted>Your answer helps us understand whether this is useful. It stays on this device.</Body><View style={screenStyles.gap24}><Action label="Yes" onPress={() => { void finishFeedback("yes"); }} /></View><View style={screenStyles.gap12}><Action kind="secondary" label="Not really" onPress={() => { void finishFeedback("not_really"); }} /></View><View style={screenStyles.gap12}><Action kind="ghost" label="Skip" onPress={() => { void finishFeedback(); }} /></View></Surface></View>
@@ -613,5 +716,6 @@ const screenStyles = StyleSheet.create({
   historyRow: { flexDirection: "row", gap: 14, borderLeftWidth: 1, borderLeftColor: palette.border, paddingLeft: 18, paddingBottom: 20, marginLeft: 7 }, historyDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: palette.accentDark, marginLeft: -23 }, historyDate: { color: palette.ink, fontWeight: "700" }, historyMeta: { color: palette.muted, marginTop: 4 }, reflectionText: { color: palette.ink, marginTop: 10, lineHeight: 22 },
   frequency: { flexDirection: "row", gap: 8, marginTop: 16 }, frequencyOption: { flex: 1, padding: 12, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.border, borderRadius: 15 }, frequencySelected: { borderColor: palette.accentDark, backgroundColor: palette.soft }, frequencyName: { color: palette.ink, fontWeight: "700", fontSize: 13 }, frequencyDetail: { color: palette.muted, fontSize: 11, marginTop: 5 },
   switchRow: { flexDirection: "row", alignItems: "center", gap: 14, marginTop: 16 }, switchTitle: { color: palette.ink, fontWeight: "700", fontSize: 15 }, switchDescription: { color: palette.muted, fontSize: 12, lineHeight: 18, marginTop: 3 },
+  backupHint: { color: palette.danger, fontSize: 13, marginTop: 8 },
   modalBackdrop: { flex: 1, backgroundColor: "#14221ACC", justifyContent: "center", padding: 24 }, feedbackBox: { padding: 24 }, feedbackTitle: { color: palette.ink, fontSize: 26, lineHeight: 33, fontWeight: "700", marginBottom: 10 },
 });

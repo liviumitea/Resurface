@@ -45,13 +45,40 @@ export async function encryptImageFromUri(uri: string, imageId: string): Promise
   }
 }
 
-export async function imageDataUri(encryptedPath: string | null): Promise<string | null> {
-  if (!encryptedPath) return null;
+/** Decrypted JPEG bytes, or null when the encrypted file is missing. Never write these to disk. */
+export async function readImageBytes(encryptedPath: string): Promise<Uint8Array | null> {
   const file = new File(encryptedPath);
   if (!file.exists) return null;
   const sealed = AESSealedData.fromCombined(await file.bytes());
-  const plaintext = await aesDecryptAsync(sealed, await imageKey());
-  return `data:image/jpeg;base64,${fromByteArray(plaintext)}`;
+  return new Uint8Array(await aesDecryptAsync(sealed, await imageKey()));
+}
+
+export async function imageDataUri(encryptedPath: string | null): Promise<string | null> {
+  if (!encryptedPath) return null;
+  const plaintext = await readImageBytes(encryptedPath);
+  return plaintext ? `data:image/jpeg;base64,${fromByteArray(plaintext)}` : null;
+}
+
+/** Encrypts restored JPEG bytes under this device's photo key into a new app-private file. */
+export async function writeEncryptedImage(plaintext: Uint8Array, fileName: string): Promise<string> {
+  const sealed = await aesEncryptAsync(plaintext, await imageKey());
+  const target = new File(imageDirectory(), `${fileName}.enc`);
+  target.create({ overwrite: true });
+  target.write(await sealed.combined());
+  return target.uri;
+}
+
+/**
+ * Removes encrypted photo files that no insight references, such as leftovers of a replaced restore.
+ * Matches by file name, not full URI, so a differently spelled path can never delete a live photo.
+ */
+export function deleteUnreferencedImages(referencedPaths: (string | null)[]): void {
+  const referenced = new Set(referencedPaths.filter((path): path is string => !!path).map((path) => path.split("/").pop()));
+  for (const entry of imageDirectory().list()) {
+    if (entry instanceof File && entry.name.endsWith(".enc") && !referenced.has(entry.name)) {
+      try { entry.delete(); } catch { /* Best effort; an orphan is ciphertext only. */ }
+    }
+  }
 }
 
 export function deleteEncryptedImage(encryptedPath: string | null): void {

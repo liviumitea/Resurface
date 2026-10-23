@@ -2,8 +2,13 @@ import * as Crypto from "expo-crypto";
 import { File, Paths } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
+import { fromByteArray, toByteArray } from "base64-js";
+import {
+  BACKUP_EXTENSION, BackupError, deriveBackupKey, newKdfParams, openBackup, readBackupHeader, sealBackup,
+  validateBackupContents, type BackupContents,
+} from "./backup";
 import type { Insight } from "./domain";
-import { deleteEncryptedImage, encryptImageFromUri } from "./media";
+import { deleteEncryptedImage, deleteUnreferencedImages, encryptImageFromUri, readImageBytes, writeEncryptedImage } from "./media";
 import { CREATE_SCHEMA_SQL } from "./storage-queries";
 import { createStore } from "./store";
 
@@ -80,4 +85,77 @@ export async function createInsight(content: string | null, context: string | nu
 export async function deleteInsight(insightId: string): Promise<void> {
   const deleted = await store.deleteInsightRow(insightId);
   if (deleted) deleteEncryptedImage(deleted.imagePath);
+}
+
+/**
+ * Writes a password-protected backup to the app cache and verifies it opens before returning.
+ * Photos whose encrypted file is missing are left out; the count is returned so the UI can say so.
+ */
+export async function createBackupFile(password: string): Promise<{ uri: string; insights: number; missingPhotos: number }> {
+  const rows = await store.exportRows();
+  const photos: Record<string, string> = {};
+  const dropped = new Set<string>();
+  let missingPhotos = 0;
+  const insights = [];
+  for (const insight of rows.insights) {
+    const bytes = insight.imagePath ? await readImageBytes(insight.imagePath) : null;
+    if (bytes) photos[insight.id] = fromByteArray(bytes);
+    if (insight.imagePath && !bytes) {
+      missingPhotos += 1;
+      if (!insight.content) { dropped.add(insight.id); continue; }
+      insights.push({ ...insight, imagePath: null, imageMime: null });
+    } else insights.push(insight);
+  }
+  const contents: BackupContents = validateBackupContents({
+    exportedAt: new Date().toISOString(),
+    insights,
+    events: rows.events.filter((event) => !dropped.has(event.insightId)),
+    reflections: rows.reflections.filter((reflection) => !dropped.has(reflection.insightId)),
+    settings: rows.settings,
+    photos,
+  });
+  const key = await deriveBackupKey(password, newKdfParams(Crypto.getRandomBytes));
+  const text = sealBackup(contents, key, Crypto.getRandomBytes);
+  const check = openBackup(text, key);
+  if (check.insights.length !== contents.insights.length || check.events.length !== contents.events.length
+    || check.reflections.length !== contents.reflections.length || Object.keys(check.photos).length !== Object.keys(photos).length) {
+    throw new BackupError("invalid_contents", "The backup could not be verified. Nothing was shared.");
+  }
+  const file = new File(Paths.cache, `resurface-backup-${contents.exportedAt.slice(0, 10)}.${BACKUP_EXTENSION}`);
+  file.create({ overwrite: true });
+  file.write(text);
+  await store.track("backup_created");
+  return { uri: file.uri, insights: contents.insights.length, missingPhotos };
+}
+
+/** Deletes a backup or picked file from the app cache once it has been shared or read. */
+export function deleteCachedFile(uri: string): void {
+  try {
+    const file = new File(uri);
+    if (file.uri.startsWith(Paths.cache.uri) && file.exists) file.delete();
+  } catch {
+    // Best effort; the file only ever contains ciphertext.
+  }
+}
+
+/**
+ * Replaces everything on this device with a backup. The archive is fully decrypted and validated,
+ * and its photos written to new files, before the single database transaction that swaps the data.
+ * Any failure removes the new photos and leaves current data untouched.
+ */
+export async function restoreBackup(text: string, password: string): Promise<{ insights: number }> {
+  const contents = openBackup(text, await deriveBackupKey(password, readBackupHeader(text)));
+  const restoreId = id();
+  const imagePaths: Record<string, string> = {};
+  try {
+    for (const [insightId, photo] of Object.entries(contents.photos)) {
+      imagePaths[insightId] = await writeEncryptedImage(toByteArray(photo), `${insightId}-${restoreId}`);
+    }
+    await store.replaceAllRows(contents, imagePaths);
+  } catch (error) {
+    for (const path of Object.values(imagePaths)) deleteEncryptedImage(path);
+    throw error;
+  }
+  deleteUnreferencedImages(Object.values(imagePaths));
+  return { insights: contents.insights.length };
 }
