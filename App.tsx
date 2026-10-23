@@ -8,7 +8,7 @@ import * as Notifications from "expo-notifications";
 import { extractTextFromImage, isSupported as isOcrSupported } from "expo-text-extractor";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
+  Alert, BackHandler, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
   StyleSheet, Switch, Text, TextInput, View,
 } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -121,6 +121,8 @@ function ResurfaceApp() {
   const [backupPassword, setBackupPassword] = useState("");
   const [backupConfirm, setBackupConfirm] = useState("");
   const [backupBusy, setBackupBusy] = useState(false);
+  const [backupSharing, setBackupSharing] = useState(false);
+  const backupSession = useRef(0);
   const [restoreText, setRestoreText] = useState<string | null>(null);
 
   const report = (error: unknown) => {
@@ -435,6 +437,8 @@ function ResurfaceApp() {
 
   const closeBackupSheet = () => {
     if (backupBusy) return;
+    backupSession.current += 1;
+    setBackupSharing(false);
     setBackupMode(null);
     setBackupPassword("");
     setBackupConfirm("");
@@ -457,17 +461,29 @@ function ResurfaceApp() {
 
   // The password sheet stays up until sharing finishes, so it closes only after the share
   // sheet has been dismissed.
+  // If the share sheet never reports back, Cancel stays available while sharing; a late result
+  // from an abandoned session cannot close a newer sheet. A stranded file is cleared at launch.
   const createBackup = async () => {
+    const session = ++backupSession.current;
     setBackupBusy(true);
-    try {
-      const result = await createBackupFile(backupPassword);
-      setBackupPassword("");
-      setBackupConfirm("");
-      await shareBackup(result);
-      setBackupMode(null);
-    } catch (error) { Alert.alert("Backup not created", backupMessage(error)); }
+    let result: Awaited<ReturnType<typeof createBackupFile>>;
+    try { result = await createBackupFile(backupPassword); }
+    catch (error) { Alert.alert("Backup not created", backupMessage(error)); return; }
     finally { setBackupBusy(false); }
+    setBackupPassword("");
+    setBackupConfirm("");
+    setBackupSharing(true);
+    await shareBackup(result);
+    if (session !== backupSession.current) return;
+    setBackupSharing(false);
+    setBackupMode(null);
   };
+
+  useEffect(() => {
+    if (!backupMode) return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => { closeBackupSheet(); return true; });
+    return () => subscription.remove();
+  });
 
   const chooseRestoreFile = () => {
     Alert.alert("Replace everything on this device?", "Restoring a backup replaces all insights, photos, reflections and history currently in Resurface. This can't be undone.", [
@@ -671,7 +687,7 @@ function ResurfaceApp() {
           {backupMode === "create" && backupConfirm.length > 0 && backupConfirm !== backupPassword && <Text style={screenStyles.backupHint}>The passwords don't match.</Text>}
           <View style={screenStyles.gap24}>
             {backupMode === "create"
-              ? <Action label={backupBusy ? "Encrypting and sharing…" : "Create backup"} disabled={backupBusy || backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH || backupPassword !== backupConfirm} onPress={() => { void createBackup(); }} />
+              ? <Action label={backupBusy ? "Encrypting… this can take a moment" : backupSharing ? "Waiting for the share sheet…" : "Create backup"} disabled={backupBusy || backupSharing || backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH || backupPassword !== backupConfirm} onPress={() => { void createBackup(); }} />
               : <Action kind="danger" label={backupBusy ? "Restoring…" : "Replace and restore"} disabled={backupBusy || backupPassword.length === 0} onPress={() => { void restore(); }} />}
           </View>
           <View style={screenStyles.gap12}><Action kind="ghost" label="Cancel" disabled={backupBusy} onPress={closeBackupSheet} /></View>
