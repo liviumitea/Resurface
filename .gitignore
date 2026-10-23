@@ -9,4 +9,3 @@ android/
 .env
 .env.*
 !.env.example
-RESURFACE_BUILD_PLAN.md
