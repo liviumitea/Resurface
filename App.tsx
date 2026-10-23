@@ -136,14 +136,22 @@ function ResurfaceApp() {
         setInsightCount(await countInsights());
         if (nextSettings.onboardingComplete) await goToday();
         else { setRoute("onboarding"); await track("onboarding_started"); }
-        await reconcileNotifications(nextSettings);
-        const last = await Notifications.getLastNotificationResponseAsync();
-        const eventId = last ? notificationEventId(last) : null;
-        if (eventId) {
-          await Notifications.clearLastNotificationResponseAsync();
-          await handleNotification(eventId);
-        }
         if (live) setReady(true);
+        // Notification APIs can be slow or unavailable during simulator startup.
+        // They should never keep the local-first app behind its loading screen.
+        void (async () => {
+          try {
+            await reconcileNotifications(nextSettings);
+            const last = await Notifications.getLastNotificationResponseAsync();
+            const eventId = last ? notificationEventId(last) : null;
+            if (eventId && live) {
+              await Notifications.clearLastNotificationResponseAsync();
+              await handleNotification(eventId);
+            }
+          } catch (error) {
+            if (live) report(error);
+          }
+        })();
       } catch (error) {
         if (live) { setFatalError(error instanceof Error ? error.message : "The app could not start."); setReady(true); }
       }
@@ -273,7 +281,7 @@ function ResurfaceApp() {
     const commit = async () => {
       try {
         await markShown(current.event.id);
-        await respondToEvent(current.event.id, response, response === "yes" ? reflectionText : undefined);
+        await respondToEvent(current.event.id, response, reflectionText);
         if (settings) await reconcileNotifications(settings);
         setReflectionText("");
         setRoute("today");

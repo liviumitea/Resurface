@@ -6,6 +6,7 @@
   "scripts": {
     "start": "expo start --dev-client",
     "android": "expo run:android",
+    "preios": "node scripts/prepare-ios.mjs",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",

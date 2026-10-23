@@ -31,7 +31,7 @@ Personal content is not uploaded by this app. The image picker and image manipul
 
 Requirements: Node.js 24, npm, and a native iOS or Android toolchain. iOS builds require macOS/Xcode; Android builds require the Android SDK. Because SQLCipher and OCR are native modules, use the included `expo-dev-client` native development build rather than Expo Go.
 
-For Xcode 27 / iOS 27, the project opts into Expo SDK 57's UIKit scene lifecycle through `expo-build-properties`. After pulling a change to native dependencies or config, regenerate the ignored `ios/` project before rebuilding. Preserve any manual native changes first; `npx expo prebuild --clean --platform ios` removes and recreates that directory. Use a checkout path without spaces for local iOS builds; an Expo-generated Xcode script currently mishandles paths containing spaces.
+For Xcode 27 / iOS 27, the project opts into Expo SDK 57's UIKit scene lifecycle through `expo-build-properties`. After pulling a change to native dependencies or config, regenerate the ignored `ios/` project before rebuilding. Preserve any manual native changes first; `npx expo prebuild --clean --platform ios` removes and recreates that directory. `npm run ios` applies a narrow workaround for an Expo SDK 57 Xcode script that otherwise mishandles checkout paths containing spaces (including `Proiect Alexandra`).
 
 ```sh
 npm ci
@@ -53,6 +53,6 @@ npx expo export --platform android --output-dir /tmp/resurface-android-export
 
 ## Validation still needed
 
-The TypeScript checks, domain tests, Expo Doctor, and both platform JavaScript exports pass. A signed native build and physical-device acceptance tests have **not** been completed in this environment. Before distributing the beta, verify SQLCipher read/write and key loss behavior, AES-GCM photo round trips, OCR quality, app restarts, notification delivery/deep links while backgrounded or terminated, accessibility, and the complete first-save flow on both platforms. Confirm bundle identifiers and signing credentials before store submission.
+The TypeScript checks, domain/database-query tests, Expo Doctor, and both platform JavaScript exports pass. On 23 October 2026, `npm run ios` built successfully from the `Proiect Alexandra` path, and the iOS 27 simulator launched through Metro to the Today screen with an existing encrypted insight. This is a startup smoke test, **not** full device acceptance. Distribution signing and physical-device acceptance tests have **not** been completed. Before distributing the beta, verify SQLCipher read/write and key loss behavior, AES-GCM photo round trips, OCR quality, app restarts, notification delivery/deep links while backgrounded or terminated, accessibility, and the complete first-save flow on both platforms. Confirm bundle identifiers and signing credentials before store submission.
 
 `npm audit` currently reports advisories in the Expo/Metro/React Native dependency tree. Its proposed `--force` fix would downgrade core framework packages and is not applied. Review patched compatible releases before production distribution.

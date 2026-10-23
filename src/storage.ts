@@ -14,6 +14,10 @@ import {
   type TodayItem,
 } from "./domain";
 import { deleteEncryptedImage, encryptImageFromUri } from "./media";
+import {
+  CREATE_SCHEMA_SQL, SELECT_NOTIFICATION_CANDIDATES_SQL,
+  SELECT_TODAY_DUE_SQL, SELECT_TODAY_EXISTING_SQL,
+} from "./storage-queries";
 
 const DATABASE_KEY_NAME = "resurface.database-key.v1";
 const DEFAULT_SETTINGS: Settings = {
@@ -56,49 +60,7 @@ export async function openStorage(): Promise<void> {
     if (!cipher?.cipher_version) throw new Error("SQLCipher is unavailable in this build. Use a native development build, not Expo Go.");
     await connection.getFirstAsync("SELECT count(*) AS count FROM sqlite_master");
     await connection.execAsync("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
-    await connection.execAsync(`
-      CREATE TABLE IF NOT EXISTS insights (
-        id TEXT PRIMARY KEY NOT NULL,
-        content TEXT,
-        context TEXT,
-        imagePath TEXT,
-        imageMime TEXT,
-        status TEXT NOT NULL CHECK(status IN ('active','paused','archived')),
-        createdAt TEXT NOT NULL,
-        updatedAt TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS events (
-        id TEXT PRIMARY KEY NOT NULL,
-        insightId TEXT NOT NULL REFERENCES insights(id) ON DELETE CASCADE,
-        stage INTEGER NOT NULL,
-        scheduledAt TEXT NOT NULL,
-        selectedDay TEXT,
-        selectedAt TEXT,
-        notificationId TEXT,
-        notificationPlannedFor TEXT,
-        shownAt TEXT,
-        completedAt TEXT,
-        openedAt TEXT,
-        response TEXT,
-        valueFeedback TEXT,
-        cancelledAt TEXT
-      );
-      CREATE INDEX IF NOT EXISTS events_due ON events(scheduledAt, shownAt, cancelledAt);
-      CREATE INDEX IF NOT EXISTS events_insight ON events(insightId, scheduledAt);
-      CREATE TABLE IF NOT EXISTS reflections (
-        id TEXT PRIMARY KEY NOT NULL,
-        insightId TEXT NOT NULL REFERENCES insights(id) ON DELETE CASCADE,
-        eventId TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-        content TEXT NOT NULL,
-        createdAt TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS analytics (
-        id TEXT PRIMARY KEY NOT NULL,
-        name TEXT NOT NULL,
-        createdAt TEXT NOT NULL
-      );
-    `);
+    await connection.execAsync(CREATE_SCHEMA_SQL);
     database = connection;
   } catch (error) {
     await connection.closeAsync();
@@ -213,20 +175,10 @@ export async function getDetail(insightId: string): Promise<InsightDetail | null
 export async function selectToday(clock = new Date()): Promise<TodayItem[]> {
   const settings = await getSettings();
   const day = localDay(clock);
-  const existing = await db().getAllAsync<ResurfaceEvent>(
-    `SELECT events.* FROM events JOIN insights ON insights.id = events.insightId
-     WHERE events.selectedDay = ? AND events.cancelledAt IS NULL AND insights.status = 'active'
-     ORDER BY events.selectedAt, events.scheduledAt`, day,
-  );
+  const existing = await db().getAllAsync<ResurfaceEvent>(SELECT_TODAY_EXISTING_SQL, day);
   const slots = Math.max(0, settings.dailyCap - existing.length);
   if (slots > 0) {
-    const due = await db().getAllAsync<ResurfaceEvent>(
-      `SELECT events.* FROM events JOIN insights ON insights.id = events.insightId
-       WHERE insights.status = 'active' AND events.shownAt IS NULL AND events.cancelledAt IS NULL
-         AND events.scheduledAt <= ? AND (events.selectedDay IS NULL OR events.selectedDay <> ?)
-       ORDER BY events.scheduledAt ASC, events.id ASC LIMIT ?`,
-      clock.toISOString(), day, slots,
-    );
+    const due = await db().getAllAsync<ResurfaceEvent>(SELECT_TODAY_DUE_SQL, clock.toISOString(), day, slots);
     for (const event of due) {
       await db().runAsync("UPDATE events SET selectedDay = ?, selectedAt = ? WHERE id = ?", day, clock.toISOString(), event.id);
       await track("resurface_selected");
@@ -268,12 +220,12 @@ export async function respondToEvent(eventId: string, response: Exclude<Resurfac
     const event = await getEvent(eventId);
     if (!event || event.response || !event.shownAt) return;
     await db().runAsync("UPDATE events SET response = ? WHERE id = ?", response, eventId);
+    if (reflection?.trim()) {
+      await db().runAsync("INSERT INTO reflections (id, insightId, eventId, content, createdAt) VALUES (?, ?, ?, ?, ?)", id(), event.insightId, eventId, reflection.trim(), new Date().toISOString());
+      await track("reflection_added");
+    }
     if (response === "yes") {
       await track("still_relevant");
-      if (reflection?.trim()) {
-        await db().runAsync("INSERT INTO reflections (id, insightId, eventId, content, createdAt) VALUES (?, ?, ?, ?, ?)", id(), event.insightId, eventId, reflection.trim(), new Date().toISOString());
-        await track("reflection_added");
-      }
     } else {
       await setInsightStatusInTransaction(event.insightId, response === "not_now" ? "paused" : "archived");
     }
@@ -333,13 +285,7 @@ export async function getBetaMetrics(): Promise<{ saved: number; shown: number; 
 export type NotificationCandidate = ResurfaceEvent & { content: string | null };
 
 export async function notificationCandidates(clock = new Date()): Promise<NotificationCandidate[]> {
-  return db().getAllAsync<NotificationCandidate>(
-    `SELECT events.*, insights.content AS content FROM events JOIN insights ON insights.id = events.insightId
-     WHERE insights.status = 'active' AND events.shownAt IS NULL AND events.cancelledAt IS NULL
-       AND (events.notificationPlannedFor IS NULL OR events.notificationPlannedFor > ?)
-     ORDER BY events.scheduledAt ASC, events.id ASC LIMIT 30`,
-    clock.toISOString(),
-  );
+  return db().getAllAsync<NotificationCandidate>(SELECT_NOTIFICATION_CANDIDATES_SQL, clock.toISOString());
 }
 
 export async function clearFutureNotificationPlans(clock = new Date()): Promise<void> {
