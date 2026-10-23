@@ -5,7 +5,8 @@ import * as SecureStore from "expo-secure-store";
 import { fromByteArray } from "base64-js";
 import { BACKUP_EXTENSION } from "./backup";
 
-const IMAGE_KEY_NAME = "resurface.image-key.v1";
+export const IMAGE_KEY_NAME = "resurface.image-key.v1";
+export const IMAGE_DIRECTORY_NAME = "resurface-images";
 
 async function imageKey(): Promise<AESEncryptionKey> {
   const saved = await SecureStore.getItemAsync(IMAGE_KEY_NAME);
@@ -21,7 +22,7 @@ async function imageKey(): Promise<AESEncryptionKey> {
 }
 
 function imageDirectory(): Directory {
-  const directory = new Directory(Paths.document, "resurface-images");
+  const directory = new Directory(Paths.document, IMAGE_DIRECTORY_NAME);
   directory.create({ idempotent: true, intermediates: true });
   return directory;
 }

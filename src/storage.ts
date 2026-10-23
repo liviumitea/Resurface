@@ -1,5 +1,5 @@
 import * as Crypto from "expo-crypto";
-import { File, Paths } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 import { fromByteArray, toByteArray } from "base64-js";
@@ -8,7 +8,10 @@ import {
   validateBackupContents, type BackupContents,
 } from "./backup";
 import type { Insight } from "./domain";
-import { deleteEncryptedImage, deleteUnreferencedImages, encryptImageFromUri, readImageBytes, writeEncryptedImage } from "./media";
+import {
+  IMAGE_DIRECTORY_NAME, IMAGE_KEY_NAME, deleteEncryptedImage, deleteUnreferencedImages, encryptImageFromUri,
+  readImageBytes, writeEncryptedImage,
+} from "./media";
 import { CREATE_SCHEMA_SQL } from "./storage-queries";
 import { createStore } from "./store";
 
@@ -19,6 +22,18 @@ const DATABASE_NAME = "resurface.db";
 
 let database: SQLite.SQLiteDatabase | null = null;
 
+/**
+ * Why local data could not be opened. Only `key_unavailable` and `cannot_open` may offer starting
+ * fresh; a locked keychain or a build without SQLCipher must never lead to moving data aside.
+ */
+export type StorageFailure = "keychain_locked" | "key_unavailable" | "cannot_open" | "no_sqlcipher";
+export class StorageError extends Error {
+  constructor(readonly reason: StorageFailure, message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "StorageError";
+  }
+}
+
 function db(): SQLite.SQLiteDatabase {
   if (!database) throw new Error("The local database has not been opened.");
   return database;
@@ -28,14 +43,19 @@ function id(): string {
   return Crypto.randomUUID();
 }
 
+async function readKey(name: string): Promise<string | null> {
+  try { return await SecureStore.getItemAsync(name); }
+  catch (error) { throw new StorageError("keychain_locked", "The device keychain is not available yet. Unlock your device, then try again.", { cause: error }); }
+}
+
 async function databaseKey(): Promise<string> {
-  const existing = await SecureStore.getItemAsync(DATABASE_KEY_NAME);
+  const existing = await readKey(DATABASE_KEY_NAME);
   if (existing) return existing;
   // A missing key next to an existing database means the key is unavailable or lost.
   // Generating a replacement would overwrite any key that reappears, so stop instead.
   // expo-sqlite keeps databases in <documents>/SQLite on both iOS and Android.
   if (new File(Paths.document, "SQLite", DATABASE_NAME).exists) {
-    throw new Error("The database key is unavailable on this device. Your data has not been reset.");
+    throw new StorageError("key_unavailable", "The database key is unavailable on this device. Your data has not been reset.");
   }
   const bytes = await Crypto.getRandomBytesAsync(32);
   const key = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -51,14 +71,15 @@ export async function openStorage(): Promise<void> {
     // The key is generated as hex, so it cannot escape the PRAGMA string literal.
     await connection.execAsync(`PRAGMA key = '${key}';`);
     const cipher = await connection.getFirstAsync<{ cipher_version: string }>("PRAGMA cipher_version");
-    if (!cipher?.cipher_version) throw new Error("SQLCipher is unavailable in this build. Use a native development build, not Expo Go.");
+    if (!cipher?.cipher_version) throw new StorageError("no_sqlcipher", "SQLCipher is unavailable in this build. Use a native development build, not Expo Go.");
     await connection.getFirstAsync("SELECT count(*) AS count FROM sqlite_master");
     await connection.execAsync("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
     await connection.execAsync(CREATE_SCHEMA_SQL);
     database = connection;
   } catch (error) {
     await connection.closeAsync();
-    throw new Error("The encrypted local database could not be opened. Your data has not been reset.", { cause: error });
+    if (error instanceof StorageError) throw error;
+    throw new StorageError("cannot_open", "The encrypted local database could not be opened. Your data has not been reset.", { cause: error });
   }
 }
 
@@ -158,4 +179,32 @@ export async function restoreBackup(text: string, password: string): Promise<{ i
   }
   deleteUnreferencedImages(Object.values(imagePaths));
   return { insights: contents.insights.length };
+}
+
+/**
+ * Last resort when local data cannot be opened: moves the database, photos and any remaining keys
+ * aside under a dated name, deleting nothing, so the app can start empty and a backup can be
+ * restored. If the key ever becomes available again, the set-aside data can still be recovered.
+ * Refuses while the keychain is locked, since waiting and retrying is the right fix then.
+ */
+export async function setAsideUnreadableData(): Promise<string> {
+  if (database) throw new Error("The database is open, so there is nothing to set aside.");
+  const keys: [string, string | null][] = [];
+  for (const name of [DATABASE_KEY_NAME, IMAGE_KEY_NAME]) keys.push([name, await readKey(name)]);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const aside = new Directory(Paths.document, `unreadable-${stamp}`);
+  aside.create({ intermediates: true });
+  const sqlite = new Directory(Paths.document, "SQLite");
+  for (const name of [DATABASE_NAME, `${DATABASE_NAME}-wal`, `${DATABASE_NAME}-shm`]) {
+    const file = new File(sqlite, name);
+    if (file.exists) file.move(aside);
+  }
+  const images = new Directory(Paths.document, IMAGE_DIRECTORY_NAME);
+  if (images.exists) images.move(aside);
+  for (const [name, value] of keys) {
+    if (!value) continue;
+    await SecureStore.setItemAsync(`${name}.set-aside-${stamp}`, value);
+    await SecureStore.deleteItemAsync(name);
+  }
+  return aside.name;
 }

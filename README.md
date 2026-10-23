@@ -65,7 +65,9 @@ npx expo export --platform android --output-dir /tmp/resurface-android-export
 - **Permanent delete:** removes the insight row, its events and reflections (cascade) and its photo file. A backup file the user already saved elsewhere is not affected.
 - **Backups:** only ciphertext is written to the cache, and it is deleted after the share sheet closes. A forgotten backup password cannot be recovered.
 - **OS backups:** Android `allowBackup` is off, because Keystore keys do not move to a new device and an auto-restored database could never be opened. Use the encrypted backup instead. On iOS, Documents and non-device-only Keychain items are in encrypted device backups, so a full iPhone restore should keep both. This must be verified on device (backlog item 8).
-- **Known limits:** the iOS app-switcher snapshot and screenshots can show open insights. Photo paths are stored as absolute URIs, which iOS may change on app update (verify on device). If a key is lost, the app stops without resetting data and offers retry only. Starting fresh needs a product decision.
+- **App switcher:** whenever the app is not active, a plain cover replaces the screen, so the iOS app-switcher snapshot shows only the wordmark (verified from the snapshot file iOS saves). Android would need FLAG_SECURE for the same effect.
+- **Key loss:** if a key is missing or the database cannot be opened, the app offers "Start fresh and restore a backup". It moves the database, photos and any remaining keys into `Documents/unreadable-<date>/` (nothing is deleted), starts empty, and onboarding offers "Restore from a backup". It refuses while the keychain is merely locked. Verified on the iOS simulator by resetting its keychain.
+- **Known limits:** screenshots can show open insights. Photo paths are stored as absolute URIs, which iOS may change on app update (verify on device).
 
 ## Validation still needed
 

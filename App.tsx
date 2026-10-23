@@ -8,7 +8,7 @@ import * as Notifications from "expo-notifications";
 import { extractTextFromImage, isSupported as isOcrSupported } from "expo-text-extractor";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert, BackHandler, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
+  Alert, AppState, BackHandler, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
   StyleSheet, Switch, Text, TextInput, View, useWindowDimensions,
 } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -19,7 +19,7 @@ import { notificationEventId, reconcileNotifications, requestNotificationPermiss
 import {
   countInsights, createBackupFile, createInsight, deleteCachedFile, deleteInsight, editInsight, getBetaMetrics, getDetail,
   getEvent, getInsight, getSettings, getShownCount, listInsights, markCompleted, markValueFeedbackAsked, markOpened, markShown,
-  openStorage, respondToEvent, restoreBackup, snoozeInsight, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
+  openStorage, respondToEvent, restoreBackup, setAsideUnreadableData, snoozeInsight, StorageError, type StorageFailure, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
 } from "./src/storage";
 import { palette } from "./src/theme";
 import { Action, Body, BottomNav, Eyebrow, Header, IconButton, Screen, Surface, Title } from "./src/ui";
@@ -86,6 +86,7 @@ function TodaySkeleton() {
 function ResurfaceApp() {
   const [ready, setReady] = useState(false);
   const [fatalError, setFatalError] = useState<string | null>(null);
+  const [fatalReason, setFatalReason] = useState<StorageFailure | null>(null);
   const [startAttempt, setStartAttempt] = useState(0);
   const [todayStatus, setTodayStatus] = useState<TodayStatus>("loading");
   const todayRequest = useRef(0);
@@ -115,7 +116,7 @@ function ResurfaceApp() {
   const [reflectionText, setReflectionText] = useState("");
   const [feedbackEventId, setFeedbackEventId] = useState<string | null>(null);
   const [pendingNextIndex, setPendingNextIndex] = useState(0);
-  const [metrics, setMetrics] = useState<{ saved: number; shown: number; asked: number; answered: number; valuable: number } | null>(null);
+  const [metrics, setMetrics] = useState<{ activated: boolean; saved: number; shown: number; asked: number; answered: number; valuable: number } | null>(null);
   const [notificationGranted, setNotificationGranted] = useState<boolean | null>(null);
   const [backupMode, setBackupMode] = useState<"create" | "restore" | null>(null);
   const [backupPassword, setBackupPassword] = useState("");
@@ -208,7 +209,11 @@ function ResurfaceApp() {
           }
         })();
       } catch (error) {
-        if (live) { setFatalError(error instanceof Error ? error.message : "The app could not start."); setReady(true); }
+        if (live) {
+          setFatalError(error instanceof Error ? error.message : "The app could not start.");
+          setFatalReason(error instanceof StorageError ? error.reason : null);
+          setReady(true);
+        }
       }
     })();
     const listener = Notifications.addNotificationResponseReceivedListener((response) => {
@@ -220,6 +225,7 @@ function ResurfaceApp() {
 
   const retryStart = () => {
     setFatalError(null);
+    setFatalReason(null);
     setReady(false);
     setStartAttempt((attempt) => attempt + 1);
   };
@@ -543,7 +549,18 @@ function ResurfaceApp() {
   };
 
   if (!ready) return <Loading />;
-  if (fatalError) return <Screen><Eyebrow>Unable to open</Eyebrow><Title>Your insights are still protected.</Title><Body>{fatalError}</Body><View style={screenStyles.gap24}><Body muted>Resurface will not reset an encrypted database when its key is unavailable. If your device was just restarted, unlock it and try again.</Body></View><View style={screenStyles.gap24}><Action label="Try again" icon="refresh" onPress={retryStart} /></View></Screen>;
+  const confirmStartFresh = () => {
+    Alert.alert("Start fresh on this device?", "Resurface can't open the data saved here. Starting fresh moves it aside — nothing is deleted — and opens an empty app, so you can restore an encrypted backup. Data moved aside can't be opened in the app.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Start fresh", style: "destructive", onPress: () => {
+        void setAsideUnreadableData().then(retryStart).catch((error: unknown) => {
+          Alert.alert("Couldn't start fresh", error instanceof Error ? error.message : "Nothing was changed. Try again.");
+        });
+      } },
+    ]);
+  };
+
+  if (fatalError) return <Screen><Eyebrow>Unable to open</Eyebrow><Title>Your insights are still protected.</Title><Body>{fatalError}</Body><View style={screenStyles.gap24}><Body muted>Resurface will not reset an encrypted database when its key is unavailable. If your device was just restarted, unlock it and try again.</Body></View><View style={screenStyles.gap24}><Action label="Try again" icon="refresh" onPress={retryStart} /></View>{(fatalReason === "key_unavailable" || fatalReason === "cannot_open") && <View style={screenStyles.gap12}><Action kind="ghost" label="Start fresh and restore a backup" onPress={confirmStartFresh} /></View>}</Screen>;
   if (!settings) return <Loading />;
 
   const onboarding = [
@@ -568,6 +585,7 @@ function ResurfaceApp() {
             if (settings.onboardingStep === 2) beginCapture("onboarding");
             else void updateSettings({ onboardingStep: settings.onboardingStep + 1 });
           }} />
+          <Action kind="ghost" label="Restore from a backup" icon="download-outline" onPress={chooseRestoreFile} />
         </View>
       </View>
     </Screen>}
@@ -698,7 +716,7 @@ function ResurfaceApp() {
       <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Backup</Text><Body muted>Create a password-protected file you can save in Files, iCloud Drive, Google Drive or anywhere else, and restore it on this or another device.</Body></View>
       <View style={screenStyles.gap12}><Action kind="secondary" label="Create encrypted backup" icon="lock-closed-outline" onPress={() => openBackupSheet("create")} /></View>
       <View style={screenStyles.gap12}><Action kind="ghost" label="Restore from backup" icon="download-outline" onPress={chooseRestoreFile} /></View>
-      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Beta signals on this device</Text><Body muted>{metrics ? `${metrics.saved} saved · ${metrics.shown} shown · asked ${metrics.asked} · ${metrics.answered} answered · ${metrics.valuable} marked worthwhile` : "Loading…"}</Body><Body muted>{metrics?.shown ? `${Math.round((metrics.answered / metrics.shown) * 100)}% of shown insights received a value answer.` : "Answer rate appears after the first resurfacing."}</Body><Body muted>{metrics?.answered ? `${Math.round((metrics.valuable / metrics.answered) * 100)}% of answers said a resurfacing was worthwhile.` : "Value rate appears after you answer a feedback question."}</Body></View>
+      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Beta signals on this device</Text><Body muted>{metrics ? (metrics.activated ? "Activated: saved an insight and saw one resurface." : "Not yet activated: save an insight and see it resurface.") : ""}</Body><Body muted>{metrics ? `${metrics.saved} saved · ${metrics.shown} shown · asked ${metrics.asked} · ${metrics.answered} answered · ${metrics.valuable} marked worthwhile` : "Loading…"}</Body><Body muted>{metrics?.shown ? `${Math.round((metrics.answered / metrics.shown) * 100)}% of shown insights received a value answer.` : "Answer rate appears after the first resurfacing."}</Body><Body muted>{metrics?.answered ? `${Math.round((metrics.valuable / metrics.answered) * 100)}% of answers said a resurfacing was worthwhile.` : "Value rate appears after you answer a feedback question."}</Body></View>
       <View style={screenStyles.gap24}><Body muted>Resurface 0.1.0 · Device-only beta</Body></View>
     </Screen>}
 
@@ -716,8 +734,8 @@ function ResurfaceApp() {
           {backupMode === "create" && backupConfirm.length > 0 && backupConfirm !== backupPassword && <Text style={screenStyles.backupHint}>The passwords don't match.</Text>}
           <View style={screenStyles.gap24}>
             {backupMode === "create"
-              ? <Action label={backupBusy ? "Encrypting… this can take a moment" : backupSharing ? "Waiting for the share sheet…" : "Create backup"} disabled={backupBusy || backupSharing || backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH || backupPassword !== backupConfirm} onPress={() => { void createBackup(); }} />
-              : <Action kind="danger" label={backupBusy ? "Restoring…" : "Replace and restore"} disabled={backupBusy || backupPassword.length === 0} onPress={() => { void restore(); }} />}
+              ? <Action label={backupBusy ? "Encrypting… about 10 seconds" : backupSharing ? "Waiting for the share sheet…" : "Create backup"} disabled={backupBusy || backupSharing || backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH || backupPassword !== backupConfirm} onPress={() => { void createBackup(); }} />
+              : <Action kind="danger" label={backupBusy ? "Restoring… about 10 seconds" : "Replace and restore"} disabled={backupBusy || backupPassword.length === 0} onPress={() => { void restore(); }} />}
           </View>
           <View style={screenStyles.gap12}><Action kind="ghost" label="Cancel" disabled={backupBusy} onPress={closeBackupSheet} /></View>
         </Surface>
@@ -730,8 +748,22 @@ function ResurfaceApp() {
   </>;
 }
 
+/**
+ * Covers the app whenever it is not active, so the iOS app switcher snapshot never shows an
+ * insight. (Android takes its snapshot too late for this; FLAG_SECURE would be needed there.)
+ */
+function PrivacyCover() {
+  const [hidden, setHidden] = useState(AppState.currentState !== "active");
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => setHidden(state !== "active"));
+    return () => subscription.remove();
+  }, []);
+  if (!hidden) return null;
+  return <View style={[StyleSheet.absoluteFill, screenStyles.privacyCover]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"><Text style={screenStyles.brand}>resurface<Text style={screenStyles.brandDot}>.</Text></Text></View>;
+}
+
 export default function App() {
-  return <SafeAreaProvider><ResurfaceApp /></SafeAreaProvider>;
+  return <SafeAreaProvider><ResurfaceApp /><PrivacyCover /></SafeAreaProvider>;
 }
 
 const screenStyles = StyleSheet.create({
@@ -739,6 +771,7 @@ const screenStyles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 28 },
   loadingMark: { width: 90, height: 90, borderRadius: 30, backgroundColor: palette.accent, alignItems: "center", justifyContent: "center" },
   loadingText: { color: palette.muted, marginTop: 24, fontSize: 16 },
+  privacyCover: { backgroundColor: palette.background, alignItems: "center", justifyContent: "center" },
   brand: { fontSize: 25, fontWeight: "800", color: palette.ink, letterSpacing: -1 }, brandDot: { color: palette.accentDark },
   step: { color: palette.muted, marginTop: 8, fontSize: 12, fontWeight: "700", letterSpacing: 2 },
   onboarding: { flex: 1, paddingHorizontal: 26, paddingTop: 22, paddingBottom: 26, justifyContent: "space-between" },

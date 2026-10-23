@@ -276,16 +276,22 @@ export function createStore({ db, id, now }: StoreDependencies) {
   /**
    * Content-free beta signals. Answer rate is answered / shown and worth rate is yes / answered
    * (build plan); `asked` is reported beside them because the question is only occasional.
-   * `saved` counts insights currently kept, so deletions lower it.
+   * `saved` counts insights currently kept, so deletions lower it. `activated` means the core loop
+   * has been completed once — an insight saved and a resurfacing seen — from counters that survive
+   * deletion.
    */
-  async function getBetaMetrics(): Promise<{ saved: number; shown: number; asked: number; answered: number; valuable: number }> {
+  async function getBetaMetrics(): Promise<{ activated: boolean; saved: number; shown: number; asked: number; answered: number; valuable: number }> {
     const saved = await countInsights();
     const asked = (await db().getFirstAsync<{ count: number }>("SELECT count(*) AS count FROM analytics WHERE name = 'resurface_value_feedback_asked'"))?.count ?? 0;
+    const loop = await db().getFirstAsync<{ created: number; seen: number }>(
+      "SELECT sum(name = 'insight_created') AS created, sum(name = 'resurface_shown') AS seen FROM analytics",
+    );
+    const activated = (loop?.created ?? 0) > 0 && (loop?.seen ?? 0) > 0;
     const row = await db().getFirstAsync<{ shown: number; answered: number; valuable: number | null }>(
       `SELECT count(shownAt) AS shown, count(valueFeedback) AS answered,
         sum(CASE WHEN valueFeedback = 'yes' THEN 1 ELSE 0 END) AS valuable FROM events`,
     );
-    return { saved, shown: row?.shown ?? 0, asked, answered: row?.answered ?? 0, valuable: row?.valuable ?? 0 };
+    return { activated, saved, shown: row?.shown ?? 0, asked, answered: row?.answered ?? 0, valuable: row?.valuable ?? 0 };
   }
 
   async function notificationCandidates(clock = now()): Promise<NotificationCandidate[]> {
