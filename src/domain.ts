@@ -86,6 +86,39 @@ export function nextNotificationDate(dueAt: string, clock: Date, time: string): 
   return date;
 }
 
+export const MAX_PLANNED_NOTIFICATIONS = 30;
+export const GENERIC_NOTIFICATION = { title: "Resurface", body: "Something worth remembering is waiting for you." } as const;
+
+export type NotificationPlan = { eventId: string; insightId: string; when: Date; title: string; body: string };
+
+/**
+ * Plans at most one local notification per local day and at most 30 in total, oldest due first.
+ * Insight text appears only when the user opted in; otherwise the message is generic.
+ */
+export function planNotifications(
+  candidates: { id: string; insightId: string; scheduledAt: string; content: string | null }[],
+  settings: Pick<Settings, "notificationTime" | "showInsightText">,
+  clock: Date,
+): NotificationPlan[] {
+  const usedDays = new Set<string>();
+  const plans: NotificationPlan[] = [];
+  for (const event of candidates) {
+    if (plans.length >= MAX_PLANNED_NOTIFICATIONS) break;
+    const when = nextNotificationDate(event.scheduledAt, clock, settings.notificationTime);
+    while (usedDays.has(localDay(when))) when.setDate(when.getDate() + 1);
+    usedDays.add(localDay(when));
+    const personal = settings.showInsightText && event.content;
+    plans.push({
+      eventId: event.id,
+      insightId: event.insightId,
+      when,
+      title: settings.showInsightText ? "Something you wanted to remember" : GENERIC_NOTIFICATION.title,
+      body: personal ? event.content!.slice(0, 140) : GENERIC_NOTIFICATION.body,
+    });
+  }
+  return plans;
+}
+
 export function shouldAskValueFeedback(shownCount: number): boolean {
   return shownCount === 1 || shownCount % 3 === 0;
 }

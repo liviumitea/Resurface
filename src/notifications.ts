@@ -1,5 +1,5 @@
 import * as Notifications from "expo-notifications";
-import { localDay, nextNotificationDate, type Settings } from "./domain";
+import { planNotifications, type Settings } from "./domain";
 import { clearFutureNotificationPlans, notificationCandidates, setNotificationPlan } from "./storage";
 
 Notifications.setNotificationHandler({
@@ -27,27 +27,12 @@ export async function reconcileNotifications(settings: Settings, clock = new Dat
   const permission = await Notifications.getPermissionsAsync();
   if (!permission.granted) return;
 
-  const usedDays = new Set<string>();
-  let scheduled = 0;
-  const candidates = await notificationCandidates(clock);
-  for (const event of candidates) {
-    if (scheduled >= 30) break;
-    let when = nextNotificationDate(event.scheduledAt, clock, settings.notificationTime);
-    while (usedDays.has(localDay(when))) when.setDate(when.getDate() + 1);
-    const eventId = event.id;
+  for (const plan of planNotifications(await notificationCandidates(clock), settings, clock)) {
     const notificationId = await Notifications.scheduleNotificationAsync({
-      content: {
-        title: settings.showInsightText ? "Something you wanted to remember" : "Resurface",
-        body: settings.showInsightText && event.content
-          ? event.content.slice(0, 140)
-          : "Something worth remembering is waiting for you.",
-        data: { eventId, insightId: event.insightId },
-      },
-      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: when },
+      content: { title: plan.title, body: plan.body, data: { eventId: plan.eventId, insightId: plan.insightId } },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: plan.when },
     });
-    await setNotificationPlan(eventId, notificationId, when.toISOString());
-    usedDays.add(localDay(when));
-    scheduled += 1;
+    await setNotificationPlan(plan.eventId, notificationId, plan.when.toISOString());
   }
 }
 
