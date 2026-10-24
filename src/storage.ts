@@ -15,6 +15,7 @@ import {
 import { MigrationError, runMigrations } from "./migrations";
 import { createStore } from "./store";
 
+export { CategoryError } from "./store";
 export type { BackupStatus, BetaMetrics, NotificationCandidate } from "./store";
 
 const DATABASE_KEY_NAME = "resurface.database-key.v1";
@@ -87,17 +88,17 @@ export async function openStorage(): Promise<void> {
 const store = createStore({ db, id, now: () => new Date() });
 
 export const {
-  track, getSettings, saveSettings, getBackupStatus, countInsights, listInsights, getInsight, getEvent, getDetail,
+  track, getSettings, saveSettings, getBackupStatus, listCategories, createCategory, renameCategory, deleteCategory, setInsightCategories, countInsights, listInsights, getInsight, getEvent, getDetail,
   selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus, snoozeInsight, editInsight,
   markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics, notificationCandidates,
   clearFutureNotificationPlans, setNotificationPlan,
 } = store;
 
-export async function createInsight(content: string | null, context: string | null, imageUri: string | null): Promise<Insight> {
+export async function createInsight(content: string | null, context: string | null, imageUri: string | null, categoryIds: string[] = []): Promise<Insight> {
   const insightId = id();
   const imagePath = imageUri ? await encryptImageFromUri(imageUri, insightId) : null;
   try {
-    return await store.insertInsight(insightId, content, context, imagePath);
+    return await store.insertInsight(insightId, content, context, imagePath, categoryIds);
   } catch (error) {
     deleteEncryptedImage(imagePath);
     throw error;

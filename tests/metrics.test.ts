@@ -10,7 +10,7 @@ const KNOWN_EVENTS = new Set([
   "resurface_selected", "resurface_shown", "notification_opened", "notification_scheduled",
   "reflection_added", "still_relevant", "insight_paused", "insight_archived", "insight_resumed",
   "insight_restored", "insight_snoozed", "insight_deleted", "resurface_value_feedback_asked", "resurface_value_feedback",
-  "backup_created", "backup_created_incomplete", "backup_verified", "backup_restored", "onboarding_started", "onboarding_completed",
+  "category_created", "category_deleted", "backup_created", "backup_created_incomplete", "backup_verified", "backup_restored", "onboarding_started", "onboarding_completed",
 ]);
 
 test("beta signals match fixture data", async () => {

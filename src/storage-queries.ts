@@ -48,6 +48,24 @@ export const SCHEMA_V1_SQL = `
   );
 `;
 
+/**
+ * Schema version 2: optional user-made categories (SCRUM-56). Names are unique ignoring case.
+ * Deleting a category removes only its links; deleting an insight removes its links.
+ */
+export const SCHEMA_V2_SQL = `
+  CREATE TABLE IF NOT EXISTS categories (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    createdAt TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS insight_categories (
+    insightId TEXT NOT NULL REFERENCES insights(id) ON DELETE CASCADE,
+    categoryId TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    PRIMARY KEY (insightId, categoryId)
+  );
+  CREATE INDEX IF NOT EXISTS insight_categories_category ON insight_categories(categoryId);
+`;
+
 export const SELECT_TODAY_EXISTING_SQL = `
   SELECT events.* FROM events JOIN insights ON insights.id = events.insightId
   WHERE events.selectedDay = ? AND events.cancelledAt IS NULL AND insights.status = 'active'

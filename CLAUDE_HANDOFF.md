@@ -20,7 +20,7 @@ Expo SDK 57 / React Native 0.86 / TypeScript, version 0.1.0.
 - `App.tsx` — navigation and screens, backup/restore panel (an in-screen overlay, not a native Modal), app-switcher `PrivacyCover`.
 - `src/domain.ts` — models and pure rules: scheduling, notification planning, stale-notification dismissal.
 - `src/store.ts` — every persistence/lifecycle rule over an injected database, ID generator and clock (Expo-free, so tests run it directly).
-- `src/migrations.ts` — append-only schema migrations on `PRAGMA user_version` (SCRUM-53); `src/storage.ts` runs them on open.
+- `src/migrations.ts` — append-only schema migrations on `PRAGMA user_version` (SCRUM-53); `src/storage.ts` runs them on open. Schema 2 adds categories (SCRUM-56); backups with categories are archive v2, others stay v1.
 - `src/storage.ts` — opens SQLCipher, owns keys, binds the store; backup file creation/restore; `StorageError` reasons; key-loss `setAsideUnreadableData()`.
 - `src/backup.ts` — v1 archive: scrypt (N=2^15, r=8, p=1) + AES-256-GCM via pinned `@noble/*` 2.4.0, header authenticated, strict validation.
 - `src/media.ts` — photo encryption, photo paths resolved by file name, launch-time cache sweep.

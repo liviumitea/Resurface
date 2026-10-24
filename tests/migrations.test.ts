@@ -52,7 +52,7 @@ test("a new, empty database is created at the current version", async () => {
   try {
     assert.equal(await runMigrations(migrationDatabase(sqlite)), SCHEMA_VERSION);
     const tables = sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map((row) => (row as { name: string }).name);
-    assert.deepEqual(tables, [...TABLES].sort());
+    assert.deepEqual(tables, [...TABLES, "categories", "insight_categories"].sort());
   } finally { sqlite.close(); }
 });
 

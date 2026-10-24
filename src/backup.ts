@@ -1,7 +1,10 @@
 import { gcm } from "@noble/ciphers/aes.js";
 import { scryptAsync } from "@noble/hashes/scrypt.js";
 import { fromByteArray, toByteArray } from "base64-js";
-import { isValidInsight, type Insight, type Reflection, type ResurfaceEvent, type Settings } from "./domain";
+import {
+  MAX_CATEGORY_NAME_LENGTH, isValidInsight, normalizeCategoryName,
+  type Category, type Insight, type InsightCategory, type Reflection, type ResurfaceEvent, type Settings,
+} from "./domain";
 
 /**
  * Versioned, password-protected backup archive. Pure JavaScript, so the exact code that runs on
@@ -10,7 +13,13 @@ import { isValidInsight, type Insight, type Reflection, type ResurfaceEvent, typ
  */
 
 export const BACKUP_FORMAT = "resurface-backup";
-export const BACKUP_VERSION = 1;
+/**
+ * Archive versions this app reads. Version 2 adds categories; an archive is written as version 2
+ * only when it has categories, so archives without them stay readable by apps that know only v1,
+ * while those apps refuse a v2 archive instead of silently dropping its categories.
+ */
+export const BACKUP_VERSION = 2;
+export const READABLE_BACKUP_VERSIONS: readonly number[] = [1, 2];
 export const BACKUP_EXTENSION = "resurfacebackup";
 /** Declared in app.json so iOS treats backups as ordinary data (for example, offering Save to Files). */
 export const BACKUP_UTI = "app.resurface.mobile.backup";
@@ -27,7 +36,14 @@ export type BackupContents = {
   photos: Record<string, string>;
   /** Present only when the user explicitly chose to back up without photos that could not be read. */
   omissions?: BackupOmissions;
+  /** Version 2: user-made categories and their links. Absent or empty in version 1 archives. */
+  categories?: Category[];
+  insightCategories?: InsightCategory[];
 };
+
+export function archiveVersion(contents: Pick<BackupContents, "categories" | "insightCategories">): number {
+  return contents.categories?.length || contents.insightCategories?.length ? 2 : 1;
+}
 
 /** What a backup left out: photos that could not be read, and how that affected insights. */
 export type BackupOmissions = { missingPhotos: number; insightsWithoutPhoto: number; insightsLeftOut: number };
@@ -77,7 +93,7 @@ export type BackupSummary = {
 export function summarizeBackup(contents: BackupContents): BackupSummary {
   return {
     exportedAt: contents.exportedAt,
-    version: BACKUP_VERSION,
+    version: archiveVersion(contents),
     insights: contents.insights.length,
     photos: Object.keys(contents.photos).length,
     events: contents.events.length,
@@ -130,6 +146,8 @@ export function assembleBackupContents(
     settings: rows.settings,
     photos,
     ...(omissions.missingPhotos ? { omissions } : {}),
+    ...(rows.categories?.length ? { categories: rows.categories } : {}),
+    ...(rows.insightCategories?.length ? { insightCategories: rows.insightCategories.filter((link) => !leftOut.has(link.insightId)) } : {}),
   });
 }
 
@@ -151,7 +169,7 @@ function associatedData(envelope: Omit<Envelope, "ciphertext">): Uint8Array {
 }
 
 export function sealBackup(contents: BackupContents, { kdf, key }: BackupKey, random: (length: number) => Uint8Array, limits: BackupLimits = BACKUP_LIMITS): string {
-  const header = { format: BACKUP_FORMAT, version: BACKUP_VERSION, kdf, cipher: "AES-256-GCM" as const, nonce: fromByteArray(random(12)) };
+  const header = { format: BACKUP_FORMAT, version: archiveVersion(contents), kdf, cipher: "AES-256-GCM" as const, nonce: fromByteArray(random(12)) };
   const plaintext = new TextEncoder().encode(JSON.stringify(contents));
   const ciphertext = gcm(key, toByteArray(header.nonce), associatedData(header)).encrypt(plaintext);
   const text = JSON.stringify({ ...header, ciphertext: fromByteArray(ciphertext) } satisfies Envelope);
@@ -169,7 +187,7 @@ export function readBackupHeader(text: string, limits: BackupLimits = BACKUP_LIM
   let envelope: unknown;
   try { envelope = JSON.parse(text); } catch { throw new BackupError("not_a_backup", "This file isn't a Resurface backup."); }
   if (!isRecord(envelope) || envelope.format !== BACKUP_FORMAT) throw new BackupError("not_a_backup", "This file isn't a Resurface backup.");
-  if (envelope.version !== BACKUP_VERSION) throw new BackupError("unsupported_version", "This backup was made by a newer version of Resurface. Update the app, then try again.");
+  if (!READABLE_BACKUP_VERSIONS.includes(envelope.version as number)) throw new BackupError("unsupported_version", "This backup was made by a newer version of Resurface. Update the app, then try again.");
   const kdf = envelope.kdf;
   const valid = isRecord(kdf) && kdf.name === "scrypt" && envelope.cipher === "AES-256-GCM"
     && isPowerOfTwo(kdf.N) && kdf.N >= 2 ** 10 && kdf.N <= limits.maxKdf.N
@@ -214,7 +232,7 @@ const isLocalDay = (value: unknown) => value === null || (typeof value === "stri
 /** Checks the structure and every cross-reference before anything on the device is touched. */
 export function validateBackupContents(value: unknown, limits: BackupLimits = BACKUP_LIMITS): BackupContents {
   if (!isRecord(value)) throw invalid("not an object");
-  const { exportedAt, insights, events, reflections, settings, photos, omissions } = value;
+  const { exportedAt, insights, events, reflections, settings, photos, omissions, categories, insightCategories } = value;
   if (!isTimestamp(exportedAt)) throw invalid("export date");
   if (!Array.isArray(insights) || !Array.isArray(events) || !Array.isArray(reflections) || !isRecord(settings) || !isRecord(photos)) throw invalid("missing sections");
   if (insights.length > limits.maxInsights || events.length > limits.maxEvents || reflections.length > limits.maxReflections) {
@@ -270,6 +288,31 @@ export function validateBackupContents(value: unknown, limits: BackupLimits = BA
     reflectionIds.add(item.id);
   }
 
+  const categoryIds = new Set<string>();
+  const categoryNames = new Set<string>();
+  if (categories !== undefined) {
+    if (!Array.isArray(categories)) throw invalid("categories");
+    for (const item of categories) {
+      if (!isRecord(item) || !isText(item.id) || typeof item.name !== "string" || !isTimestamp(item.createdAt)) throw invalid("category record");
+      const name = normalizeCategoryName(item.name);
+      if (!name || name !== item.name || name.length > MAX_CATEGORY_NAME_LENGTH) throw invalid("category name");
+      if (categoryIds.has(item.id) || categoryNames.has(name.toLowerCase())) throw invalid("duplicate category");
+      categoryIds.add(item.id);
+      categoryNames.add(name.toLowerCase());
+    }
+  }
+  const links = new Set<string>();
+  if (insightCategories !== undefined) {
+    if (!Array.isArray(insightCategories)) throw invalid("category links");
+    for (const item of insightCategories) {
+      if (!isRecord(item) || !isText(item.insightId) || !isText(item.categoryId)) throw invalid("category link");
+      if (!insightById.has(item.insightId) || !categoryIds.has(item.categoryId)) throw invalid("category link reference");
+      const key = `${item.insightId}\u0000${item.categoryId}`;
+      if (links.has(key)) throw invalid("duplicate category link");
+      links.add(key);
+    }
+  }
+
   if (![1, 3, 5].includes(settings.dailyCap as number) || typeof settings.notificationTime !== "string"
     || !/^([01]\d|2[0-3]):[0-5]\d$/.test(settings.notificationTime) || typeof settings.showInsightText !== "boolean") {
     throw invalid("settings");
@@ -283,5 +326,7 @@ export function validateBackupContents(value: unknown, limits: BackupLimits = BA
     settings: { dailyCap: settings.dailyCap as 1 | 3 | 5, notificationTime: settings.notificationTime, showInsightText: settings.showInsightText },
     photos: photos as Record<string, string>,
     ...(omissions === undefined ? {} : { omissions: omissions as BackupOmissions }),
+    ...(categories === undefined ? {} : { categories: categories as Category[] }),
+    ...(insightCategories === undefined ? {} : { insightCategories: insightCategories as InsightCategory[] }),
   };
 }

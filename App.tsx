@@ -13,19 +13,20 @@ import {
 } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { BACKUP_LIMITS, BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH, describeOmissions } from "./src/backup";
-import { addCalendarDays, isValidInsight, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
+import { MAX_CATEGORY_NAME_LENGTH, addCalendarDays, isValidInsight, type Category, type CategoryWithCount, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
 import { clearTransientCaches, deletePickedImageFromCache, imageDataUri } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
   countInsights, createBackupFile, createInsight, deleteCachedFile, deleteInsight, editInsight, getBetaMetrics, getDetail,
   getEvent, getInsight, getSettings, getShownCount, listInsights, markCompleted, markValueFeedbackAsked, markOpened, markShown,
   openStorage, respondToEvent, restoreBackup, setAsideUnreadableData, snoozeInsight, StorageError, verifyBackup,
+  CategoryError, createCategory, deleteCategory, listCategories, renameCategory, setInsightCategories,
   getBackupStatus, type BackupStatus, type BetaMetrics, type StorageFailure, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
 } from "./src/storage";
 import { palette } from "./src/theme";
 import { Action, Body, BottomNav, Eyebrow, Header, IconButton, Screen, Surface, Title } from "./src/ui";
 
-type Route = "onboarding" | "capture-choice" | "capture" | "photo" | "saved" | "permission" | "today" | "reflect" | "library" | "detail" | "settings";
+type Route = "onboarding" | "capture-choice" | "capture" | "photo" | "saved" | "permission" | "today" | "reflect" | "library" | "detail" | "settings" | "categories";
 type CaptureOrigin = "onboarding" | "today" | "library";
 type TodayStatus = "loading" | "ready" | "error";
 
@@ -69,6 +70,32 @@ function InsightCard({ insight, compact = false }: { insight: Insight; compact?:
   );
 }
 
+/** Toggleable category chips with an inline "new category" field; categories are always optional. */
+function CategoryChips({ categories, selected, onToggle, onCreate }: {
+  categories: Category[];
+  selected: string[];
+  onToggle: (categoryId: string) => void;
+  onCreate: (name: string) => Promise<boolean>;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const add = async () => { if (await onCreate(name)) { setName(""); setAdding(false); } };
+  return <View style={screenStyles.chipWrap}>
+    {categories.map((category) => {
+      const on = selected.includes(category.id);
+      return <Pressable key={category.id} accessibilityRole="checkbox" accessibilityState={{ checked: on }} accessibilityLabel={`Category ${category.name}`} onPress={() => onToggle(category.id)} style={[screenStyles.filter, on && screenStyles.selectedFilter]}>
+        <Text style={[screenStyles.filterText, on && screenStyles.selectedFilterText]}>{category.name}</Text>
+      </Pressable>;
+    })}
+    {adding
+      ? <View style={screenStyles.newCategory}>
+          <TextInput autoFocus clearButtonMode="while-editing" value={name} onChangeText={setName} maxLength={MAX_CATEGORY_NAME_LENGTH} placeholder="New category" placeholderTextColor={palette.muted} returnKeyType="done" onSubmitEditing={() => { void add(); }} style={[screenStyles.search, screenStyles.flex]} accessibilityLabel="New category name" />
+          <Action kind="secondary" label="Add" disabled={!name.trim()} onPress={() => { void add(); }} />
+        </View>
+      : <Pressable accessibilityRole="button" onPress={() => setAdding(true)} style={[screenStyles.filter, screenStyles.addChip]}><Text style={screenStyles.filterText}>+ New category</Text></Pressable>}
+  </View>;
+}
+
 function Loading({ message = "Making space for what matters…" }: { message?: string }) {
   return <Screen scroll={false}><View style={screenStyles.center}><View style={screenStyles.loadingMark}><Ionicons name="sparkles" size={34} color={palette.accentDark} /></View><Text style={screenStyles.loadingText}>{message}</Text></View></Screen>;
 }
@@ -104,6 +131,11 @@ function ResurfaceApp() {
   const [libraryStatus, setLibraryStatus] = useState<InsightStatus>("active");
   const [librarySearch, setLibrarySearch] = useState("");
   const [libraryItems, setLibraryItems] = useState<Insight[]>([]);
+  const [categories, setCategories] = useState<CategoryWithCount[]>([]);
+  const [libraryCategory, setLibraryCategory] = useState<string | null>(null);
+  const [captureCategoryIds, setCaptureCategoryIds] = useState<string[]>([]);
+  const [editCategoryIds, setEditCategoryIds] = useState<string[]>([]);
+  const [renamingCategory, setRenamingCategory] = useState<{ id: string; name: string } | null>(null);
   const [libraryError, setLibraryError] = useState(false);
   const [libraryAttempt, setLibraryAttempt] = useState(0);
   const [detail, setDetail] = useState<InsightDetail | null>(null);
@@ -175,6 +207,7 @@ function ResurfaceApp() {
     setEditing(false);
     setEditContent(found.insight.content ?? "");
     setEditContext(found.insight.context ?? "");
+    setEditCategoryIds(found.categories.map((category) => category.id));
     setRoute("detail");
   }, [goToday]);
 
@@ -253,14 +286,41 @@ function ResurfaceApp() {
 
   // The previous list stays visible while a search refines it; a failure replaces it
   // with a retryable message rather than an alert over stale results.
+  const refreshCategories = useCallback(async () => {
+    try {
+      const next = await listCategories();
+      setCategories(next);
+      setLibraryCategory((current) => (current && next.some((category) => category.id === current) ? current : null));
+    } catch { /* The category list is optional; the screens work without it. */ }
+  }, []);
+
+  useEffect(() => {
+    if (route === "library" || route === "capture" || route === "detail" || route === "categories") void refreshCategories();
+  }, [route, refreshCategories]);
+
+  const toggle = (ids: string[], categoryId: string) => (ids.includes(categoryId) ? ids.filter((value) => value !== categoryId) : [...ids, categoryId]);
+
+  /** Creates a category from a chip field and selects it; reports name problems without losing input. */
+  const addCategory = async (name: string, select?: (categoryId: string) => void): Promise<boolean> => {
+    try {
+      const category = await createCategory(name);
+      await refreshCategories();
+      select?.(category.id);
+      return true;
+    } catch (error) {
+      Alert.alert("Category not added", error instanceof CategoryError ? error.message : "Something went wrong. Please try again.");
+      return false;
+    }
+  };
+
   useEffect(() => {
     if (route !== "library") return;
     let active = true;
-    listInsights(libraryStatus, librarySearch)
+    listInsights(libraryStatus, librarySearch, libraryCategory)
       .then((items) => { if (active) { setLibraryItems(items); setLibraryError(false); } })
       .catch(() => { if (active) setLibraryError(true); });
     return () => { active = false; };
-  }, [route, libraryStatus, librarySearch, libraryAttempt]);
+  }, [route, libraryStatus, librarySearch, libraryCategory, libraryAttempt]);
 
   const beginCapture = (origin: CaptureOrigin) => {
     deletePickedImageFromCache(captureImageUri);
@@ -268,6 +328,7 @@ function ResurfaceApp() {
     setCaptureContent("");
     setCaptureContext("");
     setCaptureImageUri(null);
+    setCaptureCategoryIds([]);
     setRoute("capture");
   };
 
@@ -322,7 +383,7 @@ function ResurfaceApp() {
     setBusy(true);
     try {
       const wasFirst = (await countInsights()) === 0;
-      const insight = await createInsight(captureContent, captureContext, captureImageUri);
+      const insight = await createInsight(captureContent, captureContext, captureImageUri, captureCategoryIds);
       deletePickedImageFromCache(captureImageUri);
       setCaptureImageUri(null);
       setSavedInsightId(insight.id);
@@ -436,6 +497,7 @@ function ResurfaceApp() {
     if (!detail || !isValidInsight(editContent, !!detail.insight.imagePath)) return;
     try {
       await editInsight(detail.insight.id, editContent, editContext);
+      await setInsightCategories(detail.insight.id, editCategoryIds);
       setEditing(false);
       await openDetail(detail.insight.id, detailOrigin);
       if (settings) await reconcileNotifications(settings);
@@ -662,6 +724,8 @@ function ResurfaceApp() {
       {captureImageUri && <View style={screenStyles.attached}><Ionicons name="image-outline" size={18} color={palette.accentDark} /><Text style={screenStyles.attachedText}>Original photo attached</Text><IconButton icon="close" label="Remove photo" onPress={() => { deletePickedImageFromCache(captureImageUri); setCaptureImageUri(null); }} /></View>}
       <Text style={screenStyles.fieldLabel}>Why does this matter to you? <Text style={screenStyles.optional}>Optional</Text></Text>
       <TextInput multiline textAlignVertical="top" placeholder="Add a little context, if you'd like…" placeholderTextColor={palette.muted} value={captureContext} onChangeText={setCaptureContext} style={screenStyles.contextInput} accessibilityLabel="Optional context" />
+      <Text style={screenStyles.fieldLabel}>Categories <Text style={screenStyles.optional}>Optional</Text></Text>
+      <CategoryChips categories={categories} selected={captureCategoryIds} onToggle={(categoryId) => setCaptureCategoryIds((ids) => toggle(ids, categoryId))} onCreate={(name) => addCategory(name, (categoryId) => setCaptureCategoryIds((ids) => [...ids, categoryId]))} />
       <View style={screenStyles.row}><View style={screenStyles.flex}><Action kind="secondary" icon="camera-outline" label="Take photo" onPress={() => { void pickImage("camera"); }} /></View><View style={screenStyles.flex}><Action kind="secondary" icon="images-outline" label="Choose photo" onPress={() => { void pickImage("library"); }} /></View></View>
       <View style={screenStyles.gap24}><Action label={busy ? "Saving…" : "Save insight"} icon="bookmark-outline" disabled={busy || !isValidInsight(captureContent, !!captureImageUri)} onPress={() => { void saveCapture(); }} /></View>
       <Text style={screenStyles.privacyNote}>Your words and photos stay on this device.</Text>
@@ -738,8 +802,17 @@ function ResurfaceApp() {
       <ScrollView contentContainerStyle={screenStyles.libraryList} keyboardShouldPersistTaps="handled">
       <View><Eyebrow>What you've saved</Eyebrow><Title>Your insights</Title><TextInput placeholder="Search content or context" placeholderTextColor={palette.muted} value={librarySearch} onChangeText={setLibrarySearch} style={screenStyles.search} accessibilityLabel="Search insights" /></View>
       <View style={screenStyles.filters}>{(["active", "paused", "archived"] as InsightStatus[]).map((status) => <Pressable key={status} accessibilityRole="tab" accessibilityState={{ selected: libraryStatus === status }} onPress={() => setLibraryStatus(status)} style={[screenStyles.filter, libraryStatus === status && screenStyles.selectedFilter]}><Text style={[screenStyles.filterText, libraryStatus === status && screenStyles.selectedFilterText]}>{status[0]!.toUpperCase() + status.slice(1)}</Text></Pressable>)}</View>
+      {categories.length > 0 && <View style={screenStyles.chipWrap}>
+        {[{ id: null, name: "All categories" }, ...categories].map((category) => {
+          const on = libraryCategory === category.id;
+          return <Pressable key={category.id ?? "all"} accessibilityRole="radio" accessibilityState={{ checked: on }} accessibilityLabel={category.id ? `Show category ${category.name}` : "Show all categories"} onPress={() => setLibraryCategory(category.id)} style={[screenStyles.filter, on && screenStyles.selectedFilter]}>
+            <Text style={[screenStyles.filterText, on && screenStyles.selectedFilterText]}>{category.name}</Text>
+          </Pressable>;
+        })}
+      </View>}
+      <Pressable accessibilityRole="button" onPress={() => setRoute("categories")} style={screenStyles.manageLink}><Text style={screenStyles.textLinkInline}>Manage categories</Text></Pressable>
         {libraryError ? <Surface style={screenStyles.emptyCard}><Ionicons name="cloud-offline-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>Your library couldn't load.</Text><Body muted>Your insights are still saved on this device. Nothing was changed or reset.</Body><View style={screenStyles.gap24}><Action label="Try again" icon="refresh" onPress={() => setLibraryAttempt((attempt) => attempt + 1)} /></View></Surface>
-          : libraryItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="albums-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{librarySearch ? "No matching insights." : `No ${libraryStatus} insights.`}</Text><Body muted>What you save will be here whenever you need it.</Body></Surface>
+          : libraryItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="albums-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{librarySearch ? "No matching insights." : libraryCategory ? `No ${libraryStatus} insights in this category.` : `No ${libraryStatus} insights.`}</Text><Body muted>What you save will be here whenever you need it.</Body></Surface>
           : libraryItems.map((insight) => <Pressable key={insight.id} accessibilityRole="button" onPress={() => { void openDetail(insight.id); }} style={screenStyles.libraryRow}><View style={screenStyles.libraryIcon}><Ionicons name={insight.imagePath ? "image-outline" : "bookmark-outline"} size={19} color={palette.accentDark} /></View><View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{insight.content || "Saved photo"}</Text><Text style={screenStyles.libraryDate}>{formatDate(insight.createdAt)}</Text></View><Ionicons name="chevron-forward" size={17} color={palette.muted} /></Pressable>)}
       </ScrollView>
       <BottomNav active="library" onToday={() => { void goToday(); }} onCapture={() => openCaptureChoice("library")} onLibrary={goLibrary} />
@@ -752,10 +825,15 @@ function ResurfaceApp() {
         <Title>Edit insight</Title>
         <TextInput multiline textAlignVertical="top" value={editContent} onChangeText={setEditContent} placeholder="What do you want to remember?" style={screenStyles.captureInput} accessibilityLabel="Edit insight text" />
         <Text style={screenStyles.fieldLabel}>Context</Text><TextInput multiline textAlignVertical="top" value={editContext} onChangeText={setEditContext} style={screenStyles.contextInput} accessibilityLabel="Edit context" />
+        <Text style={screenStyles.fieldLabel}>Categories <Text style={screenStyles.optional}>Optional</Text></Text>
+        <CategoryChips categories={categories} selected={editCategoryIds} onToggle={(categoryId) => setEditCategoryIds((ids) => toggle(ids, categoryId))} onCreate={(name) => addCategory(name, (categoryId) => setEditCategoryIds((ids) => [...ids, categoryId]))} />
         <View style={screenStyles.gap24}><Action label="Save changes" disabled={!isValidInsight(editContent, !!detail.insight.imagePath)} onPress={() => { void saveEdit(); }} /></View>
         <View style={screenStyles.gap12}><Action kind="ghost" label="Cancel" onPress={() => setEditing(false)} /></View>
       </> : <>
         <InsightCard insight={detail.insight} />
+        {detail.categories.length > 0 && <View style={[screenStyles.chipWrap, screenStyles.gap12]} accessibilityLabel={`Categories: ${detail.categories.map((category) => category.name).join(", ")}`}>
+          {detail.categories.map((category) => <View key={category.id} style={[screenStyles.filter, screenStyles.categoryTag]}><Text style={screenStyles.filterText}>{category.name}</Text></View>)}
+        </View>}
         <View style={screenStyles.gap24}><Action kind="secondary" label="Edit" icon="create-outline" onPress={() => setEditing(true)} /></View>
         {detail.insight.status === "active" && (() => {
           const next = detail.events.find((event) => !event.shownAt && !event.cancelledAt);
@@ -770,6 +848,34 @@ function ResurfaceApp() {
         <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Resurfacing history</Text></View>
         {detail.events.filter((event) => !!event.shownAt).length === 0 ? <Body muted>We'll bring this back after some time has passed.</Body> : detail.events.filter((event) => !!event.shownAt).map((event) => <View key={event.id} style={screenStyles.historyRow}><View style={screenStyles.historyDot} /><View style={screenStyles.flex}><Text style={screenStyles.historyDate}>{formatDate(event.shownAt!)}</Text><Text style={screenStyles.historyMeta}>{event.response === "yes" ? "Still relevant" : event.response === "not_now" ? "Paused" : event.response === "not_anymore" ? "Archived" : "Seen"}</Text>{detail.reflections.filter((reflection) => reflection.eventId === event.id).map((reflection) => <Text key={reflection.id} style={screenStyles.reflectionText}>{reflection.content}</Text>)}</View></View>)}
       </>}
+    </Screen>}
+
+    {route === "categories" && <Screen>
+      <Header title="Categories" back={goLibrary} />
+      <Eyebrow>Organize your insights</Eyebrow><Title>Categories</Title>
+      <Body muted>Optional labels you choose. Renaming or deleting a category never deletes an insight.</Body>
+      <View style={screenStyles.gap24}><CategoryChips categories={[]} selected={[]} onToggle={() => undefined} onCreate={(name) => addCategory(name)} /></View>
+      <View style={screenStyles.gap24}>
+        {categories.length === 0 ? <Body muted>No categories yet.</Body> : categories.map((category) => renamingCategory?.id === category.id
+          ? <View key={category.id} style={screenStyles.libraryRow}>
+              <TextInput autoFocus clearButtonMode="while-editing" value={renamingCategory.name} onChangeText={(name) => setRenamingCategory({ id: category.id, name })} maxLength={MAX_CATEGORY_NAME_LENGTH} style={[screenStyles.search, screenStyles.flex]} accessibilityLabel={`New name for ${category.name}`} />
+              <Action kind="secondary" label="Save" onPress={() => {
+                void renameCategory(category.id, renamingCategory.name).then(() => { setRenamingCategory(null); void refreshCategories(); })
+                  .catch((error: unknown) => Alert.alert("Category not renamed", error instanceof CategoryError ? error.message : "Something went wrong. Please try again."));
+              }} />
+              <IconButton icon="close" label="Cancel rename" onPress={() => setRenamingCategory(null)} />
+            </View>
+          : <View key={category.id} style={screenStyles.libraryRow}>
+              <View style={screenStyles.flex}><Text style={screenStyles.libraryText}>{category.name}</Text><Text style={screenStyles.libraryDate}>{category.insights} insight{category.insights === 1 ? "" : "s"}</Text></View>
+              <IconButton icon="create-outline" label={`Rename ${category.name}`} onPress={() => setRenamingCategory({ id: category.id, name: category.name })} />
+              <IconButton icon="trash-outline" label={`Delete ${category.name}`} onPress={() => {
+                Alert.alert(`Delete "${category.name}"?`, `It's on ${category.insights} insight${category.insights === 1 ? "" : "s"}. Those insights stay; only the label is removed.`, [
+                  { text: "Cancel", style: "cancel" },
+                  { text: "Delete category", style: "destructive", onPress: () => { void deleteCategory(category.id).then(refreshCategories).catch(report); } },
+                ]);
+              }} />
+            </View>)}
+      </View>
     </Screen>}
 
     {route === "settings" && <Screen>
@@ -871,6 +977,12 @@ const screenStyles = StyleSheet.create({
   imageMessage: { color: palette.muted, fontSize: 13, textAlign: "center" }, imageRetry: { color: palette.accentDark, fontWeight: "700", padding: 8 }, imageRetryTarget: { minHeight: 44, minWidth: 44, justifyContent: "center" },
   skeletonLine: { height: 14, borderRadius: 7, backgroundColor: palette.soft, marginBottom: 12 }, skeletonLarge: { height: 24, borderRadius: 9 },
   skeletonButton: { height: 52, borderRadius: 15, backgroundColor: palette.soft },
+  chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  addChip: { backgroundColor: "transparent", borderWidth: 1, borderColor: palette.border, borderStyle: "dashed" },
+  categoryTag: { minHeight: 32, paddingVertical: 6 },
+  newCategory: { flexDirection: "row", alignItems: "center", gap: 8, width: "100%" },
+  manageLink: { minHeight: 44, justifyContent: "center", alignSelf: "flex-start", marginBottom: 8 },
+  textLinkInline: { color: palette.accentDark, fontWeight: "700" },
   emptyCard: { alignItems: "flex-start", marginTop: 18, gap: 12 }, emptyTitle: { color: palette.ink, fontSize: 22, fontWeight: "700", marginTop: 12 },
   textLink: { color: palette.accentDark, fontWeight: "700", textAlign: "center", padding: 20 },
   search: { backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.border, borderRadius: 15, minHeight: 50, paddingHorizontal: 14, paddingVertical: 12, color: palette.ink, marginTop: 8 },

@@ -36,10 +36,21 @@ export type Reflection = {
   content: string;
   createdAt: string;
 };
+/** A user-made label for organizing insights; never assigned automatically. */
+export type Category = { id: string; name: string; createdAt: string };
+export type CategoryWithCount = Category & { insights: number };
+export type InsightCategory = { insightId: string; categoryId: string };
+export const MAX_CATEGORY_NAME_LENGTH = 40;
+
+export function normalizeCategoryName(name: string): string {
+  return name.trim().replace(/\s+/g, " ");
+}
+
 export type InsightDetail = {
   insight: Insight;
   events: ResurfaceEvent[];
   reflections: Reflection[];
+  categories: Category[];
 };
 export type Settings = {
   dailyCap: 1 | 3 | 5;

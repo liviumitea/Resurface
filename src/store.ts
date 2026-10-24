@@ -1,6 +1,11 @@
 import {
+  MAX_CATEGORY_NAME_LENGTH,
   dueForStage,
   localDay,
+  normalizeCategoryName,
+  type Category,
+  type CategoryWithCount,
+  type InsightCategory,
   type Insight,
   type InsightDetail,
   type InsightStatus,
@@ -32,6 +37,14 @@ export type StoreDependencies = {
 };
 
 export type NotificationCandidate = ResurfaceEvent & { content: string | null };
+
+export type CategoryProblem = "empty" | "too_long" | "duplicate" | "missing";
+export class CategoryError extends Error {
+  constructor(readonly problem: CategoryProblem, message: string) {
+    super(message);
+    this.name = "CategoryError";
+  }
+}
 
 export type BetaMetrics = {
   firstSaveAt: string | null;
@@ -110,8 +123,8 @@ export function createStore({ db, id, now }: StoreDependencies) {
     );
   }
 
-  /** Inserts the insight and its first event; the caller owns any already-encrypted photo. */
-  async function insertInsight(insightId: string, content: string | null, context: string | null, imagePath: string | null): Promise<Insight> {
+  /** Inserts the insight, its first event and any categories; the caller owns any already-encrypted photo. */
+  async function insertInsight(insightId: string, content: string | null, context: string | null, imagePath: string | null, categoryIds: string[] = []): Promise<Insight> {
     const created = now();
     const insight: Insight = {
       id: insightId,
@@ -130,6 +143,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
         insight.status, insight.createdAt, insight.updatedAt,
       );
       await insertEvent(eventFor(insight.id, 0, created));
+      await linkCategories(insight.id, categoryIds);
       await track("insight_created");
       await track(imagePath ? (insight.content ? "insight_created_ocr" : "insight_created_photo") : "insight_created_text");
     });
@@ -140,16 +154,75 @@ export function createStore({ db, id, now }: StoreDependencies) {
     return (await db().getFirstAsync<{ count: number }>("SELECT count(*) AS count FROM insights"))?.count ?? 0;
   }
 
-  async function listInsights(status: InsightStatus, search = ""): Promise<Insight[]> {
+  async function listInsights(status: InsightStatus, search = "", categoryId: string | null = null): Promise<Insight[]> {
     const normalized = search.trim().toLowerCase();
-    if (!normalized) {
-      return db().getAllAsync<Insight>("SELECT * FROM insights WHERE status = ? ORDER BY createdAt DESC", status);
+    const where = ["status = ?"];
+    const params: (string | number | null)[] = [status];
+    if (normalized) {
+      const escaped = normalized.replace(/[\\%_]/g, "\\$&");
+      where.push("(lower(content) LIKE ? ESCAPE '\\' OR lower(context) LIKE ? ESCAPE '\\')");
+      params.push(`%${escaped}%`, `%${escaped}%`);
     }
-    const escaped = normalized.replace(/[\\%_]/g, "\\$&");
-    return db().getAllAsync<Insight>(
-      "SELECT * FROM insights WHERE status = ? AND (lower(content) LIKE ? ESCAPE '\\' OR lower(context) LIKE ? ESCAPE '\\') ORDER BY createdAt DESC",
-      status, `%${escaped}%`, `%${escaped}%`,
+    if (categoryId) {
+      where.push("id IN (SELECT insightId FROM insight_categories WHERE categoryId = ?)");
+      params.push(categoryId);
+    }
+    return db().getAllAsync<Insight>(`SELECT * FROM insights WHERE ${where.join(" AND ")} ORDER BY createdAt DESC`, ...params);
+  }
+
+  async function listCategories(): Promise<CategoryWithCount[]> {
+    return db().getAllAsync<CategoryWithCount>(
+      `SELECT categories.*, count(insight_categories.insightId) AS insights FROM categories
+       LEFT JOIN insight_categories ON insight_categories.categoryId = categories.id
+       GROUP BY categories.id ORDER BY categories.name COLLATE NOCASE`,
     );
+  }
+
+  async function checkedCategoryName(name: string, exceptId: string | null): Promise<string> {
+    const normalized = normalizeCategoryName(name);
+    if (!normalized) throw new CategoryError("empty", "Give the category a name.");
+    if (normalized.length > MAX_CATEGORY_NAME_LENGTH) throw new CategoryError("too_long", `Use at most ${MAX_CATEGORY_NAME_LENGTH} characters.`);
+    const clash = await db().getFirstAsync<{ id: string }>("SELECT id FROM categories WHERE name = ? COLLATE NOCASE AND id IS NOT ?", normalized, exceptId);
+    if (clash) throw new CategoryError("duplicate", "A category with that name already exists.");
+    return normalized;
+  }
+
+  async function createCategory(name: string): Promise<Category> {
+    const category: Category = { id: id(), name: await checkedCategoryName(name, null), createdAt: now().toISOString() };
+    await db().runAsync("INSERT INTO categories (id, name, createdAt) VALUES (?, ?, ?)", category.id, category.name, category.createdAt);
+    await track("category_created");
+    return category;
+  }
+
+  async function renameCategory(categoryId: string, name: string): Promise<void> {
+    const normalized = await checkedCategoryName(name, categoryId);
+    const result = await db().runAsync("UPDATE categories SET name = ? WHERE id = ?", normalized, categoryId);
+    if (!result.changes) throw new CategoryError("missing", "That category no longer exists.");
+  }
+
+  /** Removes the category and its links; the insights themselves are untouched. Returns how many were linked. */
+  async function deleteCategory(categoryId: string): Promise<number> {
+    const linked = (await db().getFirstAsync<{ count: number }>("SELECT count(*) AS count FROM insight_categories WHERE categoryId = ?", categoryId))?.count ?? 0;
+    await db().runAsync("DELETE FROM categories WHERE id = ?", categoryId);
+    await track("category_deleted");
+    return linked;
+  }
+
+  async function linkCategories(insightId: string, categoryIds: string[]): Promise<void> {
+    for (const categoryId of new Set(categoryIds)) {
+      await db().runAsync(
+        "INSERT OR IGNORE INTO insight_categories (insightId, categoryId) SELECT ?, id FROM categories WHERE id = ?",
+        insightId, categoryId,
+      );
+    }
+  }
+
+  /** Replaces an insight's categories; unknown category IDs are ignored. */
+  async function setInsightCategories(insightId: string, categoryIds: string[]): Promise<void> {
+    await db().withTransactionAsync(async () => {
+      await db().runAsync("DELETE FROM insight_categories WHERE insightId = ?", insightId);
+      await linkCategories(insightId, categoryIds);
+    });
   }
 
   async function getInsight(idValue: string): Promise<Insight | null> {
@@ -165,7 +238,11 @@ export function createStore({ db, id, now }: StoreDependencies) {
     if (!insight) return null;
     const events = await db().getAllAsync<ResurfaceEvent>("SELECT * FROM events WHERE insightId = ? ORDER BY scheduledAt DESC", insightId);
     const reflections = await db().getAllAsync<Reflection>("SELECT * FROM reflections WHERE insightId = ? ORDER BY createdAt DESC", insightId);
-    return { insight, events, reflections };
+    const categories = await db().getAllAsync<Category>(
+      `SELECT categories.* FROM categories JOIN insight_categories ON insight_categories.categoryId = categories.id
+       WHERE insight_categories.insightId = ? ORDER BY categories.name COLLATE NOCASE`, insightId,
+    );
+    return { insight, events, reflections, categories };
   }
 
   async function selectToday(clock = now()): Promise<TodayItem[]> {
@@ -340,6 +417,8 @@ export function createStore({ db, id, now }: StoreDependencies) {
       events: await db().getAllAsync<ResurfaceEvent>("SELECT * FROM events ORDER BY scheduledAt, id"),
       reflections: await db().getAllAsync<Reflection>("SELECT * FROM reflections ORDER BY createdAt, id"),
       settings: { dailyCap: settings.dailyCap, notificationTime: settings.notificationTime, showInsightText: settings.showInsightText },
+      categories: await db().getAllAsync<Category>("SELECT * FROM categories ORDER BY createdAt, id"),
+      insightCategories: await db().getAllAsync<InsightCategory>("SELECT * FROM insight_categories ORDER BY insightId, categoryId"),
     };
   }
 
@@ -351,6 +430,8 @@ export function createStore({ db, id, now }: StoreDependencies) {
   async function replaceAllRows(contents: Omit<BackupContents, "exportedAt" | "photos">, imagePaths: Record<string, string>): Promise<void> {
     await db().withTransactionAsync(async () => {
       await db().runAsync("DELETE FROM reflections");
+      await db().runAsync("DELETE FROM insight_categories");
+      await db().runAsync("DELETE FROM categories");
       await db().runAsync("DELETE FROM events");
       await db().runAsync("DELETE FROM insights");
       for (const insight of contents.insights) {
@@ -363,6 +444,12 @@ export function createStore({ db, id, now }: StoreDependencies) {
       }
       for (const event of contents.events) {
         await insertEvent({ ...event, notificationId: null, notificationPlannedFor: null });
+      }
+      for (const category of contents.categories ?? []) {
+        await db().runAsync("INSERT INTO categories (id, name, createdAt) VALUES (?, ?, ?)", category.id, category.name, category.createdAt);
+      }
+      for (const link of contents.insightCategories ?? []) {
+        await db().runAsync("INSERT INTO insight_categories (insightId, categoryId) VALUES (?, ?)", link.insightId, link.categoryId);
       }
       for (const reflection of contents.reflections) {
         await db().runAsync("INSERT INTO reflections (id, insightId, eventId, content, createdAt) VALUES (?, ?, ?, ?, ?)",
@@ -395,6 +482,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
 
   return {
     exportRows, replaceAllRows, recordBackupVerified, getBackupStatus,
+    listCategories, createCategory, renameCategory, deleteCategory, setInsightCategories,
     track, getSettings, saveSettings, insertInsight, countInsights, listInsights, getInsight, getEvent,
     getDetail, selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus, snoozeInsight,
     editInsight, deleteInsightRow, markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics,
