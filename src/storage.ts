@@ -15,7 +15,7 @@ import {
 import { CREATE_SCHEMA_SQL } from "./storage-queries";
 import { createStore } from "./store";
 
-export type { NotificationCandidate } from "./store";
+export type { BetaMetrics, NotificationCandidate } from "./store";
 
 const DATABASE_KEY_NAME = "resurface.database-key.v1";
 const DATABASE_NAME = "resurface.db";

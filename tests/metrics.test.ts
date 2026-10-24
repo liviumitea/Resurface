@@ -17,7 +17,8 @@ test("beta signals match fixture data", async () => {
   const h = harness(local(2026, 10, 1));
   try {
     for (const name of ["a", "b", "c", "d"]) await h.store.insertInsight(`insight-${name}`, name, null, null);
-    assert.deepEqual(await h.store.getBetaMetrics(), { activated: false, saved: 4, shown: 0, asked: 0, answered: 0, valuable: 0 });
+    const saveTime = local(2026, 10, 1).toISOString();
+    assert.deepEqual(await h.store.getBetaMetrics(), { firstSaveAt: saveTime, coreLoopAt: null, saved: 4, shown: 0, asked: 0, answered: 0, valuable: 0 }, "first-save activation without the core loop");
 
     h.setClock(local(2026, 10, 2, 10));
     await h.store.saveSettings({ dailyCap: 3 });
@@ -32,13 +33,21 @@ test("beta signals match fixture data", async () => {
     await h.store.markValueFeedbackAsked(); // skipped
 
     const metrics = await h.store.getBetaMetrics();
-    assert.deepEqual(metrics, { activated: true, saved: 4, shown: 3, asked: 3, answered: 2, valuable: 1 }, "a second answer to the same event is ignored");
+    const loopTime = local(2026, 10, 2, 10).toISOString();
+    assert.deepEqual(metrics, { firstSaveAt: saveTime, coreLoopAt: loopTime, saved: 4, shown: 3, asked: 3, answered: 2, valuable: 1 }, "a second answer to the same event is ignored");
     assert.equal(Math.round((metrics.answered / metrics.shown) * 100), 67, "answer rate = answered / shown");
     assert.equal(Math.round((metrics.valuable / metrics.answered) * 100), 50, "worth rate = yes / answered");
 
     // Known limitation: deleting an insight removes its history, and so its signals.
     await h.store.deleteInsightRow(first!.insight.id);
-    assert.deepEqual(await h.store.getBetaMetrics(), { activated: true, saved: 3, shown: 2, asked: 3, answered: 1, valuable: 0 }, "activation survives deletion");
+    assert.deepEqual(await h.store.getBetaMetrics(), { firstSaveAt: saveTime, coreLoopAt: loopTime, saved: 3, shown: 2, asked: 3, answered: 1, valuable: 0 }, "milestones survive deletion");
+  } finally { h.close(); }
+});
+
+test("an empty device has neither milestone", async () => {
+  const h = harness(local(2026, 10, 1));
+  try {
+    assert.deepEqual(await h.store.getBetaMetrics(), { firstSaveAt: null, coreLoopAt: null, saved: 0, shown: 0, asked: 0, answered: 0, valuable: 0 });
   } finally { h.close(); }
 });
 
