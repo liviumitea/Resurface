@@ -4,7 +4,7 @@ Jira-ready draft, 23 October 2026. [Product Spec v0.2](https://alexadima.atlassi
 
 Priority: **P0** before external beta, **P1** for a durable and useful v1, **P2** after beta evidence. Create one Jira epic per section and one child story/task per numbered item. Each item below includes its acceptance gate.
 
-Jira epics: [core loop](https://alexadima.atlassian.net/browse/SCRUM-23), [data safety](https://alexadima.atlassian.net/browse/SCRUM-25), [resurfacing](https://alexadima.atlassian.net/browse/SCRUM-24), [capture](https://alexadima.atlassian.net/browse/SCRUM-28), [pilot/release](https://alexadima.atlassian.net/browse/SCRUM-27), and [optional sync](https://alexadima.atlassian.net/browse/SCRUM-26). Their 22 planned child tasks are SCRUM-29 through SCRUM-50; [SCRUM-51](https://alexadima.atlassian.net/browse/SCRUM-51) tracks a reflection-note bug found during implementation. Existing architecture decisions remain in SCRUM-21 and SCRUM-22; they were not duplicated.
+Jira epics: [core loop](https://alexadima.atlassian.net/browse/SCRUM-23), [data safety](https://alexadima.atlassian.net/browse/SCRUM-25), [resurfacing](https://alexadima.atlassian.net/browse/SCRUM-24), [capture](https://alexadima.atlassian.net/browse/SCRUM-28), [pilot/release](https://alexadima.atlassian.net/browse/SCRUM-27), and [optional sync](https://alexadima.atlassian.net/browse/SCRUM-26). The initial 22 child tasks are SCRUM-29 through SCRUM-50; [SCRUM-51](https://alexadima.atlassian.net/browse/SCRUM-51) tracks a reflection-note bug, and six reviewed additions are SCRUM-52 through SCRUM-57 below. Existing architecture decisions remain in SCRUM-21 and SCRUM-22; they were not duplicated.
 
 ## Epic 1 — Reliable core loop (P0)
 
@@ -47,6 +47,10 @@ Jira epics: [core loop](https://alexadima.atlassian.net/browse/SCRUM-23), [data 
 22. **End-to-end encrypted sync (conditional).** Only if item 21 is approved: build accounts, device enrollment, encrypted records/blobs, conflict resolution, key recovery, and deletion semantics. Gate: the server cannot read personal content; cross-device and lost-device recovery are tested. No backend is needed for the current device-only beta.
 
 Out of scope until evidence changes the decision: generated advice, automatic insight extraction/tagging, social features, streaks, goals, mood tracking, and adaptive schedules.
+
+## Additional reviewed work (24 October 2026)
+
+After reviewing the latest code and avoiding duplicates in SCRUM-29–51, six more tickets were approved and created: [SCRUM-52](https://alexadima.atlassian.net/browse/SCRUM-52) real-device photo-save performance (P0), [SCRUM-53](https://alexadima.atlassian.net/browse/SCRUM-53) rollback-safe schema migrations (P0), [SCRUM-54](https://alexadima.atlassian.net/browse/SCRUM-54) same-day revisit/reflection (P1), [SCRUM-55](https://alexadima.atlassian.net/browse/SCRUM-55) backup checkup (P1), [SCRUM-56](https://alexadima.atlassian.net/browse/SCRUM-56) multiple categories (P1), and [SCRUM-57](https://alexadima.atlassian.net/browse/SCRUM-57) Romanian localization (P1). Their acceptance criteria and epic parents are in Jira and summarized in `PRODUCT_ROADMAP.md`. Complete SCRUM-53 before SCRUM-56; defer P1 expansion until P0 device acceptance and pilot evidence.
 
 ## Product Spec v0.2 traceability notes
 

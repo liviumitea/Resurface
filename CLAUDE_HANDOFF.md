@@ -24,7 +24,7 @@ Expo SDK 57 / React Native 0.86 / TypeScript, version 0.1.0.
 - `src/backup.ts` — v1 archive: scrypt (N=2^15, r=8, p=1) + AES-256-GCM via pinned `@noble/*` 2.4.0, header authenticated, strict validation.
 - `src/media.ts` — photo encryption, photo paths resolved by file name, launch-time cache sweep.
 - `src/notifications.ts` — local reminder reconciliation. `src/ui.tsx`, `src/theme.ts` — components and palette.
-- `tests/` — `domain`, `storage-queries`, `lifecycle` (production store on node:sqlite, Europe/Bucharest DST clock), `backup`, `metrics`; shared `harness.ts`. 37 tests.
+- `tests/` — `domain`, `storage-queries`, `lifecycle` (production store on node:sqlite, Europe/Bucharest DST clock), `backup`, `metrics`; shared `harness.ts`. 44 tests as of 24 October.
 - `scripts/prepare-ios.mjs` — works around Expo SDK 57 Xcode scripts mishandling the space in `Proiect Alexandra`.
 
 ## Decisions in force (do not silently change)
@@ -34,11 +34,11 @@ Expo SDK 57 / React Native 0.86 / TypeScript, version 0.1.0.
 - Backup: password-protected, replace-only restore with an explicit warning; a forgotten backup password cannot be recovered. The password step is kept strong (~10 s under Hermes) and the UI says so.
 - Key loss: never reset silently. If the key is missing or the DB won't open, offer "Start fresh and restore a backup", which moves data and keys aside under a dated name (nothing deleted). Refused while the keychain is only locked. Onboarding offers "Restore from a backup".
 - Privacy: Android `allowBackup` off; picker/manipulator/document-picker caches and stray backup files cleared at launch; app-switcher cover on iOS (Android would need FLAG_SECURE). Counters are content-free.
-- Activation = an insight saved and a resurfacing seen (counters survive deletion). Provisional pilot thresholds are in the backlog, to confirm with the pilot.
+- First-save activation and first-resurfacing/core-loop completion are separate content-free milestones (both survive deletion). Provisional pilot thresholds are in the backlog, to confirm with the pilot.
 
 ## What has and has not been verified
 
-Automated: typecheck, 37 tests, iOS/Android JS exports, CI native Android build — all passing at the latest commit.
+Automated: typecheck and 44 tests passed locally on 24 October; iOS/Android JS exports and CI native Android build passed in earlier checks but were not rerun for this handoff update.
 
 iOS 27 simulator (iPhone 18 Pro), Release build, 23 Oct 2026: Today/Library/Settings at normal and largest accessibility text; `+` chooser and text capture; create backup → share sheet with Save to Files → saved file decrypts on the Mac; wrong password refused; replace restore removed a newer insight and kept history; snooze moved the next date; app-switcher snapshot shows only the wordmark; after a simulator keychain reset the app refused to reset data, Start fresh moved everything aside, and restore from onboarding brought the insight back.
 
@@ -55,7 +55,7 @@ Not verified: any physical device; Android beyond CI build (no Android device av
 
 ## Suggested next steps
 
-The 24 October review in `PRODUCT_ROADMAP.md` supersedes the ordering below: backup completeness and restore limits come before further feature work, followed by a measured photo-save fix. The notes below remain useful implementation context.
+The 24 October review and new SCRUM-52–57 links in `PRODUCT_ROADMAP.md` supersede the ordering below. Backup completeness, resource limits, and metric separation are now implemented with automated tests; physical-device acceptance, especially photo performance and photo-containing backup/restore, remains open. The notes below remain useful implementation context.
 
 0. **Photo save is slow on the simulator — benchmark on a real iPhone (start here).** 23 Oct: legacy `manipulateAsync` took 13–115 s on a library HEIC; byte read, AES encryption and write took under 50 ms combined. 24 Oct: switched to SDK 57's contextual `ImageManipulator.manipulate().renderAsync()`; `render` (HEIC decode + resize) still took 88 s, JPEG save 0.1 s, encrypt+write 0.12 s. The simulator decodes HEIC in software, so these numbers likely overstate a device. A compatible/JPEG picker representation (`preferredAssetRepresentationMode: Compatible`, `quality < 1`) was tried but could not be measured (AXe stopped reaching the picker) and was reverted. Next: time pick → save on a physical iPhone; if still slow, try the compatible picker mode there and agree a latency target. Photos are downscaled to 2048 px (4 MB → 0.4–0.7 MB encrypted). Backup/restore with photos is still untested; the simulator holds photo insights for it.
 1. Physical iPhone acceptance (SCRUM-31): full core loop, notifications/deep links, VoiceOver, backup/restore with photos, app update keeping data. Then close SCRUM-33/51 with evidence.
