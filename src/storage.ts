@@ -12,7 +12,7 @@ import {
   IMAGE_DIRECTORY_NAME, IMAGE_KEY_NAME, deleteEncryptedImage, deleteUnreferencedImages, encryptImageFromUri,
   readImageBytes, writeEncryptedImage,
 } from "./media";
-import { CREATE_SCHEMA_SQL } from "./storage-queries";
+import { MigrationError, runMigrations } from "./migrations";
 import { createStore } from "./store";
 
 export type { BetaMetrics, NotificationCandidate } from "./store";
@@ -26,7 +26,7 @@ let database: SQLite.SQLiteDatabase | null = null;
  * Why local data could not be opened. Only `key_unavailable` and `cannot_open` may offer starting
  * fresh; a locked keychain or a build without SQLCipher must never lead to moving data aside.
  */
-export type StorageFailure = "keychain_locked" | "key_unavailable" | "cannot_open" | "no_sqlcipher";
+export type StorageFailure = "keychain_locked" | "key_unavailable" | "cannot_open" | "no_sqlcipher" | "schema_too_new" | "migration_failed";
 export class StorageError extends Error {
   constructor(readonly reason: StorageFailure, message: string, options?: { cause?: unknown }) {
     super(message, options);
@@ -74,11 +74,12 @@ export async function openStorage(): Promise<void> {
     if (!cipher?.cipher_version) throw new StorageError("no_sqlcipher", "SQLCipher is unavailable in this build. Use a native development build, not Expo Go.");
     await connection.getFirstAsync("SELECT count(*) AS count FROM sqlite_master");
     await connection.execAsync("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
-    await connection.execAsync(CREATE_SCHEMA_SQL);
+    await runMigrations(connection);
     database = connection;
   } catch (error) {
     await connection.closeAsync();
     if (error instanceof StorageError) throw error;
+    if (error instanceof MigrationError) throw new StorageError(error.reason, error.message, { cause: error });
     throw new StorageError("cannot_open", "The encrypted local database could not be opened. Your data has not been reset.", { cause: error });
   }
 }

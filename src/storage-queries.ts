@@ -1,5 +1,10 @@
-/** Kept separate from Expo modules so the same SQL can run in in-memory tests. */
-export const CREATE_SCHEMA_SQL = `
+/**
+ * Kept separate from Expo modules so the same SQL can run in in-memory tests.
+ * Schema version 1: the tables of the first released build (0.1.0), written idempotently because
+ * that build created them without recording a version. Never edit a released migration; add a new
+ * one in `migrations.ts` instead.
+ */
+export const SCHEMA_V1_SQL = `
   CREATE TABLE IF NOT EXISTS insights (
     id TEXT PRIMARY KEY NOT NULL,
     content TEXT,

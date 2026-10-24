@@ -56,6 +56,12 @@ npx expo export --platform ios --output-dir /tmp/resurface-ios-export
 npx expo export --platform android --output-dir /tmp/resurface-android-export
 ```
 
+## Data compatibility (schema and backups)
+
+- **Database schema** is versioned with SQLite `PRAGMA user_version` and upgraded by the ordered migrations in `src/migrations.ts` when the database opens. Version 1 is the 0.1.0 schema (that build stored version 0; migration 1 is idempotent so it upgrades in place). Each migration and its version bump commit in one transaction: a failure leaves the previous version readable and shows a non-destructive error; a database written by a newer app is refused, never modified. Never edit a released migration — append a new one, and add a fixture test that upgrades every released version (`tests/migrations.test.ts`).
+- **Prefer additive changes** (new tables, nullable columns or columns with defaults). A destructive change (dropping or rewriting data) needs a backup-and-verify plan and its own review.
+- **Backup format** is versioned separately from the schema (`BACKUP_VERSION` in `src/backup.ts`) because archives carry logical records, not database files. New optional fields may be added to v1 archives if older apps can safely ignore them and validation treats them as optional (as with `omissions`). Bump the backup version only when an older app could misread the archive; older apps then refuse it with "made by a newer version". Restoring always produces current-schema rows, and every app must keep restoring every archive version it ever produced.
+
 ## Privacy and deletion review (23 October 2026, code review only)
 
 - **Personal content at rest:** text, reflections, history, settings and counters are in the SQLCipher database (deleted rows and the WAL stay encrypted); photos are AES-GCM ciphertext files. Both keys are in Keychain/Keystore via SecureStore.

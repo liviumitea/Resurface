@@ -1,13 +1,33 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { ResurfaceEvent } from "../src/domain";
-import { CREATE_SCHEMA_SQL } from "../src/storage-queries";
+import { MIGRATIONS, type MigrationDatabase } from "../src/migrations";
 import { createStore, type StoreDatabase } from "../src/store";
+
+/** Applies the production migrations synchronously, as `runMigrations` would on a new database. */
+export function applyMigrations(sqlite: DatabaseSync): void {
+  for (const migration of MIGRATIONS) {
+    sqlite.exec(migration.sql);
+    sqlite.exec(`PRAGMA user_version = ${migration.version}`);
+  }
+}
+
+/** node:sqlite adapter for the migration runner. */
+export function migrationDatabase(sqlite: DatabaseSync): MigrationDatabase {
+  return {
+    execAsync: async (source) => { sqlite.exec(source); },
+    getFirstAsync: async <T>(source: string) => (sqlite.prepare(source).get() as T | undefined) ?? null,
+    withTransactionAsync: async (task) => {
+      sqlite.exec("BEGIN");
+      try { await task(); sqlite.exec("COMMIT"); } catch (error) { sqlite.exec("ROLLBACK"); throw error; }
+    },
+  };
+}
 
 /** Runs the production store over node:sqlite, the same SQLite engine family SQLCipher wraps. */
 export function harness(start: Date) {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  sqlite.exec(CREATE_SCHEMA_SQL);
+  applyMigrations(sqlite);
   const plain = <T>(row: unknown) => ({ ...(row as object) }) as T;
   const database: StoreDatabase = {
     runAsync: async (source, ...params) => ({ changes: Number(sqlite.prepare(source).run(...(params as SQLInputValue[])).changes) }),

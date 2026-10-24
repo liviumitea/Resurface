@@ -2,15 +2,16 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { dueForStage } from "../src/domain";
+import { applyMigrations } from "./harness";
 import {
-  CREATE_SCHEMA_SQL, SELECT_NOTIFICATION_CANDIDATES_SQL,
+  SELECT_NOTIFICATION_CANDIDATES_SQL,
   SELECT_TODAY_DUE_SQL, SELECT_TODAY_EXISTING_SQL,
 } from "../src/storage-queries";
 
 function database(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON");
-  db.exec(CREATE_SCHEMA_SQL);
+  applyMigrations(db);
   return db;
 }
 
