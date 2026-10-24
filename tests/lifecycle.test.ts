@@ -333,3 +333,37 @@ test("delivered notifications are removed once their insight is seen, paused, ar
     assert.deepEqual(staleNotificationIds([{ identifier: "n-foreign", eventId: null, body: "x" }], pending, true), ["n-foreign"]);
   } finally { h.close(); }
 });
+
+test("revisiting a card seen earlier today is the same exposure and accepts one late reflection", async () => {
+  const h = harness(local(2026, 10, 1));
+  try {
+    await h.store.insertInsight("insight-a", "Seen first", null, null);
+    await h.store.insertInsight("insight-b", "Seen second", null, null);
+    h.setClock(local(2026, 10, 2, 9));
+    const [first] = await h.store.selectToday();
+    await h.store.markShown(first!.event.id);
+    await h.store.markCompleted(first!.event.id); // the user tapped Next without reflecting
+    const shownCounters = () => (h.sqlite.prepare("SELECT count(*) AS n FROM analytics WHERE name = 'resurface_shown'").get() as { n: number }).n;
+    const countersBefore = shownCounters();
+    const pendingBefore = h.pending("insight-a");
+
+    // Later the same day, possibly after a restart, the user returns to it.
+    h.setClock(local(2026, 10, 2, 18));
+    const revisit = (await h.restart().selectToday()).find((item) => item.event.id === first!.event.id);
+    assert.ok(revisit?.event.shownAt, "still listed for today as seen");
+    await h.store.markShown(first!.event.id);
+    assert.equal(shownCounters(), countersBefore, "not counted as another exposure");
+    assert.deepEqual(h.pending("insight-a"), pendingBefore, "no extra pending event");
+    assert.equal((await h.store.selectToday()).length, 2, "no extra daily-cap slot used");
+
+    await h.store.respondToEvent(first!.event.id, "yes", "Thought about it later");
+    await h.store.respondToEvent(first!.event.id, "yes", "Double tap");
+    await h.restart().respondToEvent(first!.event.id, "not_now", "After restart");
+    const detail = await h.store.getDetail("insight-a");
+    assert.deepEqual(detail!.reflections.map((reflection) => [reflection.eventId, reflection.content]), [[first!.event.id, "Thought about it later"]]);
+    assert.equal(detail!.insight.status, "active");
+
+    h.setClock(local(2026, 10, 3, 9));
+    assert.ok(!(await h.store.selectToday()).some((item) => item.event.id === first!.event.id), "gone after the local day ends");
+  } finally { h.close(); }
+});

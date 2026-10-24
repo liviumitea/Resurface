@@ -114,6 +114,9 @@ function ResurfaceApp() {
   const [firstSave, setFirstSave] = useState(false);
   const [savedInsightId, setSavedInsightId] = useState<string | null>(null);
   const [reflectionText, setReflectionText] = useState("");
+  // A card seen earlier today that the user went back to; null means the current card.
+  const [revisitEventId, setRevisitEventId] = useState<string | null>(null);
+  const reflecting = useRef(false);
   const [feedbackEventId, setFeedbackEventId] = useState<string | null>(null);
   const [pendingNextIndex, setPendingNextIndex] = useState(0);
   const [metrics, setMetrics] = useState<BetaMetrics | null>(null);
@@ -231,6 +234,9 @@ function ResurfaceApp() {
   };
 
   const current = todayItems[todayIndex];
+  const reflectTarget = (revisitEventId ? todayItems.find((item) => item.event.id === revisitEventId) : undefined) ?? current;
+  // Cards already shown today (except the one on screen), so the user can go back and reflect.
+  const seenToday = todayItems.filter((item) => !!item.event.shownAt && item.event.id !== current?.event.id);
   useEffect(() => {
     if (route !== "today" || todayStatus !== "ready" || !current || current.event.shownAt) return;
     void markShown(current.event.id).then(async () => {
@@ -366,16 +372,23 @@ function ResurfaceApp() {
   };
 
   const finishReflection = async (response: "yes" | "not_now" | "not_anymore") => {
-    if (!current) return;
+    const target = reflectTarget;
+    if (!target) return;
     const commit = async () => {
+      if (reflecting.current) return;
+      reflecting.current = true;
       try {
-        await markShown(current.event.id);
-        await respondToEvent(current.event.id, response, reflectionText);
+        await markShown(target.event.id);
+        await respondToEvent(target.event.id, response, reflectionText);
         if (settings) await reconcileNotifications(settings);
         setReflectionText("");
+        setTodayItems((items) => items.map((item) => item.event.id === target.event.id ? { ...item, event: { ...item.event, response } } : item));
         setRoute("today");
-        await advanceToday();
+        // A revisit is the same exposure: return to where the user was instead of advancing.
+        if (revisitEventId) { setRevisitEventId(null); await goToday(); }
+        else await advanceToday();
       } catch (error) { report(error); }
+      finally { reflecting.current = false; }
     };
     if (response === "not_anymore") {
       Alert.alert("Archive this insight?", "It won't resurface again, but you can restore it from Library.", [
@@ -659,17 +672,32 @@ function ResurfaceApp() {
             <Text style={screenStyles.subtitle}>{todayItems.length} {todayItems.length === 1 ? "thing" : "things"} worth remembering</Text>
             <Text style={screenStyles.counter}>{todayIndex + 1} of {todayItems.length}</Text>
             <InsightCard insight={current.insight} />
-            <View style={screenStyles.gap24}><Action label="Reflect" icon="chatbubble-ellipses-outline" onPress={() => { setReflectionText(""); setRoute("reflect"); }} /></View>
+            <View style={screenStyles.gap24}><Action label="Reflect" icon="chatbubble-ellipses-outline" onPress={() => { setRevisitEventId(null); setReflectionText(""); setRoute("reflect"); }} /></View>
             <View style={screenStyles.gap12}><Action kind="secondary" label="Next" icon="arrow-forward" onPress={() => { void advanceToday(); }} /></View>
             <Pressable accessibilityRole="button" onPress={() => { void openDetail(current.insight.id, "today"); }}><Text style={screenStyles.textLink}>View insight and history</Text></Pressable>
           </>}
+        {todayStatus === "ready" && seenToday.length > 0 && <View style={screenStyles.gap24}>
+          <Text maxFontSizeMultiplier={1.8} accessibilityRole="header" style={screenStyles.sectionTitle}>Seen today</Text>
+          {seenToday.map((item) => {
+            const answer = item.event.response === "yes" ? "Reflected · still relevant" : item.event.response === "not_now" ? "Reflected · paused" : item.event.response === "not_anymore" ? "Reflected · archived" : null;
+            return <Pressable key={item.event.id} accessibilityRole="button" accessibilityLabel={`${item.insight.content || "Saved photo"}. ${answer ?? "Not reflected yet. Opens reflection."}`}
+              onPress={() => {
+                if (answer) { void openDetail(item.insight.id, "today"); return; }
+                setRevisitEventId(item.event.id); setReflectionText(""); setRoute("reflect");
+              }} style={screenStyles.libraryRow}>
+              <View style={screenStyles.libraryIcon}><Ionicons name={answer ? "checkmark-circle-outline" : "chatbubble-ellipses-outline"} size={19} color={palette.accentDark} /></View>
+              <View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{item.insight.content || "Saved photo"}</Text><Text style={screenStyles.libraryDate}>{answer ?? "Not reflected yet · tap to reflect"}</Text></View>
+              <Ionicons name="chevron-forward" size={17} color={palette.muted} />
+            </Pressable>;
+          })}
+        </View>}
       </ScrollView>
       <BottomNav active="today" onToday={() => { void goToday(); }} onCapture={() => openCaptureChoice("today")} onLibrary={goLibrary} />
     </Screen>}
 
-    {route === "reflect" && current && <Screen>
-      <Header title="Reflect" back={() => setRoute("today")} />
-      <Eyebrow>A moment to check in</Eyebrow><InsightCard insight={current.insight} compact />
+    {route === "reflect" && reflectTarget && <Screen>
+      <Header title="Reflect" back={() => { setRevisitEventId(null); setRoute("today"); }} />
+      <Eyebrow>{revisitEventId ? "Seen earlier today" : "A moment to check in"}</Eyebrow><InsightCard insight={reflectTarget.insight} compact />
       <View style={screenStyles.gap24}><Title>Does this still resonate?</Title></View>
       <TextInput multiline textAlignVertical="top" placeholder="Anything you want to add? (optional)" placeholderTextColor={palette.muted} value={reflectionText} onChangeText={setReflectionText} style={screenStyles.contextInput} accessibilityLabel="Optional reflection" />
       <View style={screenStyles.gap24}><Action label="Yes, it does" onPress={() => { void finishReflection("yes"); }} /></View>
