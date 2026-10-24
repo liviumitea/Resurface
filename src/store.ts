@@ -7,6 +7,8 @@ import {
   type Category,
   type CategoryWithCount,
   type InsightCategory,
+  type LibraryItem,
+  type LibrarySort,
   type Insight,
   type InsightDetail,
   type InsightStatus,
@@ -163,7 +165,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
     return (await db().getFirstAsync<{ count: number }>("SELECT count(*) AS count FROM insights"))?.count ?? 0;
   }
 
-  async function listInsights(status: InsightStatus, search = "", categoryId: string | null = null, favoritesOnly = false): Promise<Insight[]> {
+  async function listInsights(status: InsightStatus, search = "", categoryId: string | null = null, favoritesOnly = false, sort: LibrarySort = "newest"): Promise<LibraryItem[]> {
     const normalized = search.trim().toLowerCase();
     const where = ["status = ?"];
     const params: (string | number | null)[] = [status];
@@ -177,7 +179,16 @@ export function createStore({ db, id, now }: StoreDependencies) {
       params.push(categoryId);
     }
     if (favoritesOnly) where.push("favorite = 1");
-    return db().getAllAsync<Insight>(`SELECT * FROM insights WHERE ${where.join(" AND ")} ORDER BY createdAt DESC`, ...params);
+    const order = sort === "oldest" ? "createdAt ASC, id ASC"
+      : sort === "resurfaced" ? "lastShownAt IS NULL, lastShownAt DESC, createdAt DESC, id ASC"
+      : "createdAt DESC, id ASC";
+    return db().getAllAsync<LibraryItem>(
+      `SELECT insights.*,
+        (SELECT count(*) FROM events WHERE events.insightId = insights.id AND events.shownAt IS NOT NULL) AS timesShown,
+        (SELECT max(shownAt) FROM events WHERE events.insightId = insights.id) AS lastShownAt
+       FROM insights WHERE ${where.join(" AND ")} ORDER BY ${order}`,
+      ...params,
+    );
   }
 
   async function listCategories(): Promise<CategoryWithCount[]> {

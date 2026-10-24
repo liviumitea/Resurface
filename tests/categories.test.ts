@@ -156,3 +156,31 @@ test("category data in an archive is validated", async () => {
     }
   } finally { h.close(); }
 });
+
+test("Library sorts by newest, oldest, or most recently resurfaced, and reports exposure counts", async () => {
+  const h = harness(local(2026, 10, 1));
+  try {
+    h.setClock(local(2026, 10, 1)); await h.store.insertInsight("first", "First saved", null, null);
+    h.setClock(local(2026, 10, 2)); await h.store.insertInsight("second", "Second saved", null, null);
+    h.setClock(local(2026, 10, 3)); await h.store.insertInsight("third", "Never shown", null, null);
+
+    // "first" is shown twice, "second" once and more recently.
+    h.setClock(local(2026, 10, 2, 12));
+    const [a] = h.pending("first"); await h.store.markShown(a!.id);
+    h.setClock(local(2026, 10, 6, 12));
+    const [b] = h.pending("first"); await h.store.markShown(b!.id);
+    h.setClock(local(2026, 10, 8, 12));
+    const [c] = h.pending("second"); await h.store.markShown(c!.id);
+
+    const order = async (sort: "newest" | "oldest" | "resurfaced") => (await h.store.listInsights("active", "", null, false, sort)).map((item) => item.id);
+    assert.deepEqual(await order("newest"), ["third", "second", "first"]);
+    assert.deepEqual(await order("oldest"), ["first", "second", "third"]);
+    assert.deepEqual(await order("resurfaced"), ["second", "first", "third"], "most recent exposure first, never shown last");
+
+    const byId = Object.fromEntries((await h.store.listInsights("active")).map((item) => [item.id, item]));
+    assert.equal(byId.first!.timesShown, 2);
+    assert.equal(byId.first!.lastShownAt, local(2026, 10, 6, 12).toISOString());
+    assert.equal(byId.third!.timesShown, 0);
+    assert.equal(byId.third!.lastShownAt, null);
+  } finally { h.close(); }
+});

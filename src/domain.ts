@@ -34,6 +34,10 @@ export type ResurfaceEvent = {
 };
 
 export type TodayItem = { insight: Insight; event: ResurfaceEvent };
+
+export type LibrarySort = "newest" | "oldest" | "resurfaced";
+/** A Library row: the insight plus how often and when it last resurfaced. */
+export type LibraryItem = Insight & { timesShown: number; lastShownAt: string | null };
 export type Reflection = {
   id: string;
   insightId: string;

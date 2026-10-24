@@ -14,7 +14,7 @@ import {
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { BACKUP_LIMITS, BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH, type BackupOmissions } from "./src/backup";
 import { formatDate, formatDateTime, formatLongDay, resolveLanguage, setLanguage, t, type MessageKey } from "./src/i18n";
-import { MAX_CATEGORY_NAME_LENGTH, MAX_SOURCE_LENGTH, addCalendarDays, isValidInsight, type Category, type CategoryWithCount, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
+import { MAX_CATEGORY_NAME_LENGTH, MAX_SOURCE_LENGTH, addCalendarDays, type LibraryItem, type LibrarySort, isValidInsight, type Category, type CategoryWithCount, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
 import { clearTransientCaches, deletePickedImageFromCache, imageDataUri } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
@@ -58,6 +58,28 @@ function InsightImage({ path, height = 260 }: { path: string | null; height?: nu
   if (state === "error") return <View style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="alert-circle-outline" size={28} color={palette.muted} /><Text style={screenStyles.imageMessage}>{t("image.error")}</Text><Pressable accessibilityRole="button" accessibilityLabel={t("image.retryLabel")} onPress={() => setAttempt((value) => value + 1)} style={screenStyles.imageRetryTarget}><Text style={screenStyles.imageRetry}>{t("common.tryAgain")}</Text></Pressable></View>;
   if (!uri) return <View accessibilityLabel={t("image.loading")} style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="image-outline" size={28} color={palette.muted} /></View>;
   return <Image source={{ uri }} resizeMode="contain" style={[screenStyles.image, { height }]} accessibilityLabel={t("image.label")} />;
+}
+
+// Decrypted previews live only in memory, capped so a long Library can't hold every photo.
+const thumbnailCache = new Map<string, string>();
+const THUMBNAIL_CACHE_SIZE = 24;
+
+/** Small encrypted-photo preview for Library rows; falls back to an icon if it can't be opened. */
+function Thumbnail({ path }: { path: string }) {
+  const [uri, setUri] = useState<string | null>(thumbnailCache.get(path) ?? null);
+  useEffect(() => {
+    if (thumbnailCache.has(path)) return;
+    let active = true;
+    imageDataUri(path).then((next) => {
+      if (!next) return;
+      thumbnailCache.set(path, next);
+      while (thumbnailCache.size > THUMBNAIL_CACHE_SIZE) thumbnailCache.delete(thumbnailCache.keys().next().value!);
+      if (active) setUri(next);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [path]);
+  if (!uri) return <View style={screenStyles.libraryIcon}><Ionicons name="image-outline" size={19} color={palette.accentDark} /></View>;
+  return <Image source={{ uri }} resizeMode="cover" style={screenStyles.thumbnail} accessibilityLabel={t("image.thumbLabel")} />;
 }
 
 function InsightCard({ insight, compact = false }: { insight: Insight; compact?: boolean }) {
@@ -135,7 +157,8 @@ function ResurfaceApp() {
   const [todayIndex, setTodayIndex] = useState(0);
   const [libraryStatus, setLibraryStatus] = useState<InsightStatus>("active");
   const [librarySearch, setLibrarySearch] = useState("");
-  const [libraryItems, setLibraryItems] = useState<Insight[]>([]);
+  const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
+  const [librarySort, setLibrarySort] = useState<LibrarySort>("newest");
   const [categories, setCategories] = useState<CategoryWithCount[]>([]);
   const [libraryCategory, setLibraryCategory] = useState<string | null>(null);
   const [captureCategoryIds, setCaptureCategoryIds] = useState<string[]>([]);
@@ -330,11 +353,11 @@ function ResurfaceApp() {
   useEffect(() => {
     if (route !== "library") return;
     let active = true;
-    listInsights(libraryStatus, librarySearch, libraryCategory, favoritesOnly)
+    listInsights(libraryStatus, librarySearch, libraryCategory, favoritesOnly, librarySort)
       .then((items) => { if (active) { setLibraryItems(items); setLibraryError(false); } })
       .catch(() => { if (active) setLibraryError(true); });
     return () => { active = false; };
-  }, [route, libraryStatus, librarySearch, libraryCategory, favoritesOnly, libraryAttempt]);
+  }, [route, libraryStatus, librarySearch, libraryCategory, favoritesOnly, librarySort, libraryAttempt]);
 
   const beginCapture = (origin: CaptureOrigin) => {
     deletePickedImageFromCache(captureImageUri);
@@ -851,9 +874,16 @@ function ResurfaceApp() {
         })}
       </View>}
       <Pressable accessibilityRole="button" onPress={() => setRoute("categories")} style={screenStyles.manageLink}><Text style={screenStyles.textLinkInline}>{t("category.manage")}</Text></Pressable>
+      <View style={[screenStyles.chipWrap, screenStyles.favoritesRow]}>{(["newest", "oldest", "resurfaced"] as const).map((sort) => {
+        const on = librarySort === sort;
+        return <Pressable key={sort} accessibilityRole="radio" accessibilityState={{ checked: on }} accessibilityLabel={t("library.sortLabel", { name: t(`library.sort.${sort}` as MessageKey) })} onPress={() => setLibrarySort(sort)} style={[screenStyles.filter, on && screenStyles.selectedFilter]}>
+          <Text style={[screenStyles.filterText, on && screenStyles.selectedFilterText]}>{t(`library.sort.${sort}` as MessageKey)}</Text>
+        </Pressable>;
+      })}</View>
+      {!libraryError && libraryItems.length > 0 && <Text style={screenStyles.resultCount} accessibilityRole="summary">{t("library.resultCount", { count: libraryItems.length })}</Text>}
         {libraryError ? <Surface style={screenStyles.emptyCard}><Ionicons name="cloud-offline-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{t("library.errorTitle")}</Text><Body muted>{t("library.errorBody")}</Body><View style={screenStyles.gap24}><Action label={t("common.tryAgain")} icon="refresh" onPress={() => setLibraryAttempt((attempt) => attempt + 1)} /></View></Surface>
           : libraryItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="albums-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{librarySearch ? t("library.noMatches") : favoritesOnly ? t("library.emptyFavorites") : libraryCategory ? t(`library.emptyInCategory.${libraryStatus}` as MessageKey) : t(`library.empty.${libraryStatus}` as MessageKey)}</Text><Body muted>{t("library.emptyBody")}</Body></Surface>
-          : libraryItems.map((insight) => <Pressable key={insight.id} accessibilityRole="button" onPress={() => { void openDetail(insight.id); }} style={screenStyles.libraryRow}><View style={screenStyles.libraryIcon}><Ionicons name={insight.imagePath ? "image-outline" : "bookmark-outline"} size={19} color={palette.accentDark} /></View><View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{insight.content || t("common.savedPhoto")}</Text><Text style={screenStyles.libraryDate}>{formatDate(insight.createdAt)}{insight.source ? ` · ${insight.source}` : ""}</Text></View>{!!insight.favorite && <Ionicons name="star" size={16} color={palette.accentDark} accessibilityLabel={t("library.favoriteMark")} />}<Ionicons name="chevron-forward" size={17} color={palette.muted} /></Pressable>)}
+          : libraryItems.map((insight) => <Pressable key={insight.id} accessibilityRole="button" onPress={() => { void openDetail(insight.id); }} style={screenStyles.libraryRow}>{insight.imagePath ? <Thumbnail path={insight.imagePath} /> : <View style={screenStyles.libraryIcon}><Ionicons name="bookmark-outline" size={19} color={palette.accentDark} /></View>}<View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{insight.content || t("common.savedPhoto")}</Text><Text style={screenStyles.libraryDate}>{formatDate(insight.createdAt)}{insight.source ? ` · ${insight.source}` : ""}</Text><Text style={screenStyles.libraryDate}>{insight.lastShownAt ? t("library.seenTimes", { count: insight.timesShown, date: formatDate(insight.lastShownAt) }) : t("library.notSeenYet")}</Text></View>{!!insight.favorite && <Ionicons name="star" size={16} color={palette.accentDark} accessibilityLabel={t("library.favoriteMark")} />}<Ionicons name="chevron-forward" size={17} color={palette.muted} /></Pressable>)}
       </ScrollView>
       <BottomNav active="library" onToday={() => { void goToday(); }} onCapture={() => openCaptureChoice("library")} onLibrary={goLibrary} />
     </Screen>}
@@ -889,8 +919,8 @@ function ResurfaceApp() {
         <View style={screenStyles.gap12}>{detail.insight.status === "active" ? <Action kind="ghost" label={t("detail.pause")} onPress={() => { void updateStatus("paused"); }} /> : <Action kind="secondary" label={detail.insight.status === "paused" ? t("detail.resume") : t("detail.restore")} onPress={() => { void updateStatus("active"); }} />}</View>
         {detail.insight.status !== "archived" && <View style={screenStyles.gap12}><Action kind="ghost" label={t("common.archive")} onPress={() => { Alert.alert(t("reflect.archiveTitle"), t("detail.archiveBody"), [{ text: t("common.cancel"), style: "cancel" }, { text: t("common.archive"), onPress: () => { void updateStatus("archived"); } }]); }} /></View>}
         <View style={screenStyles.gap12}><Action kind="danger" label={t("detail.deletePermanently")} onPress={confirmDelete} /></View>
-        <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>{t("detail.history")}</Text></View>
-        {detail.events.filter((event) => !!event.shownAt).length === 0 ? <Body muted>{t("detail.historyEmpty")}</Body> : detail.events.filter((event) => !!event.shownAt).map((event) => <View key={event.id} style={screenStyles.historyRow}><View style={screenStyles.historyDot} /><View style={screenStyles.flex}><Text style={screenStyles.historyDate}>{formatDate(event.shownAt!)}</Text><Text style={screenStyles.historyMeta}>{t(`detail.response.${event.response ?? "seen"}` as MessageKey)}</Text>{detail.reflections.filter((reflection) => reflection.eventId === event.id).map((reflection) => <Text key={reflection.id} style={screenStyles.reflectionText}>{reflection.content}</Text>)}</View></View>)}
+        <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>{t("detail.history")}</Text>{detail.events.some((event) => !!event.shownAt) && <Body muted>{t("detail.historySummary", { count: detail.events.filter((event) => !!event.shownAt).length })}</Body>}</View>
+        {detail.events.filter((event) => !!event.shownAt).length === 0 ? <Body muted>{t("detail.historyEmpty")}</Body> : detail.events.filter((event) => !!event.shownAt).map((event) => <View key={event.id} style={screenStyles.historyRow}><View style={screenStyles.historyDot} /><View style={screenStyles.flex}><Text style={screenStyles.historyDate}>{formatDateTime(event.shownAt!)}</Text><Text style={screenStyles.historyMeta}>{t(`detail.response.${event.response ?? "seen"}` as MessageKey)}</Text>{detail.reflections.filter((reflection) => reflection.eventId === event.id).map((reflection) => <Text key={reflection.id} style={screenStyles.reflectionText}>{reflection.content}</Text>)}</View></View>)}
       </>}
     </Screen>}
 
@@ -1033,6 +1063,8 @@ const screenStyles = StyleSheet.create({
   categoryTag: { minHeight: 32, paddingVertical: 6 },
   newCategory: { flexDirection: "row", alignItems: "center", gap: 8, width: "100%" },
   favoritesRow: { marginBottom: 8 },
+  thumbnail: { width: 40, height: 40, borderRadius: 13, backgroundColor: palette.soft },
+  resultCount: { color: palette.muted, fontSize: 13, fontWeight: "700", marginBottom: 10 },
   manageLink: { minHeight: 44, justifyContent: "center", alignSelf: "flex-start", marginBottom: 8 },
   textLinkInline: { color: palette.accentDark, fontWeight: "700" },
   emptyCard: { alignItems: "flex-start", marginTop: 18, gap: 12 }, emptyTitle: { color: palette.ink, fontSize: 22, fontWeight: "700", marginTop: 12 },
