@@ -26,7 +26,7 @@ Expo SDK 57 / React Native 0.86 / TypeScript, version 0.1.0.
 - `src/media.ts` — photo encryption, photo paths resolved by file name, launch-time cache sweep.
 - `src/i18n.ts` — English/Romanian UI strings, plural rules, locale dates; every user-visible string goes through `t()` (tests enforce matching keys/placeholders). Native permission strings live in `locales/*.json`.
 - `src/notifications.ts` — local reminder reconciliation. `src/ui.tsx`, `src/theme.ts` — components and palette.
-- `tests/` — `domain`, `storage-queries`, `lifecycle` (production store on node:sqlite, Europe/Bucharest DST clock), `backup`, `metrics`; shared `harness.ts`. 44 tests as of 24 October.
+- `tests/` — `domain`, `storage-queries`, `lifecycle` (production store on node:sqlite, Europe/Bucharest DST clock), `backup`, `metrics`; shared `harness.ts`. 70 tests as of 24 October (also `migrations`, `categories`, `sources`, `i18n`).
 - `scripts/prepare-ios.mjs` — works around Expo SDK 57 Xcode scripts mishandling the space in `Proiect Alexandra`.
 
 ## Decisions in force (do not silently change)
@@ -40,7 +40,7 @@ Expo SDK 57 / React Native 0.86 / TypeScript, version 0.1.0.
 
 ## What has and has not been verified
 
-Automated: typecheck and 44 tests passed locally on 24 October; iOS/Android JS exports and CI native Android build passed in earlier checks but were not rerun for this handoff update.
+Automated: typecheck and 70 tests passed locally on 24 October; iOS/Android JS exports and CI native Android build passed in earlier checks but were not rerun for this handoff update.
 
 iOS 27 simulator (iPhone 18 Pro), Release build, 23 Oct 2026: Today/Library/Settings at normal and largest accessibility text; `+` chooser and text capture; create backup → share sheet with Save to Files → saved file decrypts on the Mac; wrong password refused; replace restore removed a newer insight and kept history; snooze moved the next date; app-switcher snapshot shows only the wordmark; after a simulator keychain reset the app refused to reset data, Start fresh moved everything aside, and restore from onboarding brought the insight back.
 
@@ -54,6 +54,12 @@ Not verified: any physical device; Android beyond CI build (no Android device av
 - React Native 0.77+ no longer streams `console.log` to Metro.
 - iOS may move the app's data container on reinstall; photo paths are resolved by file name for that reason.
 - `ios/`, `android/`, `.expo/`, `node_modules/` are gitignored; `prebuild --clean` regenerates native folders, so inspect for manual native changes first. Do not wipe user data to make a test pass.
+
+## Implemented on 24 October (device-free roadmap work)
+
+Backup fail-closed + restore limits; separate first-save and core-loop metrics; SCRUM-53 versioned migrations (schema now 3); SCRUM-54 "Seen today" revisit; SCRUM-55 backup checkup/verify; SCRUM-56 categories (archive v2); SCRUM-57 English/Romanian localization with a language setting; SCRUM-42 sources and favorites (archive v3); SCRUM-48 dependency review (SDK 57 patches applied; build-tool-only advisories documented). Each was checked on the iOS 27 simulator in a Release build; none has physical-device acceptance. Jira has a comment with evidence on every ticket; no statuses were transitioned.
+
+Remaining work needs a physical device (SCRUM-31, 52, screen-reader passes), accounts (SCRUM-47 signing), pilot evidence (SCRUM-40, 44, 45, 49) or a device prototype (SCRUM-41 share-into is experimental in SDK 57).
 
 ## Suggested next steps
 
