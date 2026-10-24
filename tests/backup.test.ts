@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import test from "node:test";
 import {
-  BackupError, DEFAULT_KDF, deriveBackupKey, newKdfParams, openBackup, readBackupHeader, sealBackup,
-  type BackupContents, type BackupErrorCode,
+  BACKUP_LIMITS, BackupError, DEFAULT_KDF, assembleBackupContents, deriveBackupKey, describeOmissions, newKdfParams,
+  openBackup, readBackupHeader, sealBackup, validateBackupContents, type BackupContents, type BackupErrorCode, type PhotoRead,
 } from "../src/backup";
 import { harness, local } from "./harness";
 
@@ -152,4 +152,97 @@ test("a restore that fails partway leaves the current data intact", async () => 
     await assert.rejects(target.store.replaceAllRows(clash, { "insight-photo": "file:///device-b/p.enc" }));
     assert.deepEqual(await target.store.exportRows(), before);
   } finally { source.close(); target.close(); }
+});
+
+const ok = (text: string): PhotoRead => ({ status: "ok", bytes: new Uint8Array(Buffer.from(text)) });
+
+/** The populated device plus a text insight that also carries a photo. */
+async function deviceWithPhotos() {
+  const h = await populatedDevice();
+  await h.store.insertInsight("insight-captioned", "Caption", null, "file:///device-a/insight-captioned.enc");
+  return h;
+}
+
+test("a backup fails closed when any photo cannot be read, with an itemized count", async () => {
+  const h = await deviceWithPhotos();
+  try {
+    const rows = await h.store.exportRows();
+    for (const failure of ["missing", "unreadable"] as const) {
+      const reads = new Map<string, PhotoRead>([["insight-photo", { status: failure }], ["insight-captioned", { status: failure }]]);
+      assert.throws(() => assembleBackupContents(rows, reads, h.clock().toISOString()), (error: unknown) => {
+        assert.ok(error instanceof BackupError && error.code === "incomplete");
+        assert.deepEqual(error.omissions, { missingPhotos: 2, insightsWithoutPhoto: 1, insightsLeftOut: 1 });
+        assert.match(error.message, /2 photos can't be read.*1 photo-only insight would be left out.*1 insight would be saved without its photo/);
+        return true;
+      });
+    }
+  } finally { h.close(); }
+});
+
+test("an explicitly incomplete backup records what it left out and still restores", async () => {
+  const source = await deviceWithPhotos();
+  const target = harness(local(2026, 10, 5, 12));
+  try {
+    const rows = await source.store.exportRows();
+    const reads = new Map<string, PhotoRead>([["insight-photo", { status: "missing" }], ["insight-captioned", { status: "unreadable" }]]);
+    const contents = assembleBackupContents(rows, reads, source.clock().toISOString(), { allowIncomplete: true });
+    assert.deepEqual(contents.omissions, { missingPhotos: 2, insightsWithoutPhoto: 1, insightsLeftOut: 1 });
+    assert.ok(!contents.insights.some((insight) => insight.id === "insight-photo"), "the photo-only insight is left out");
+    assert.ok(!contents.events.some((event) => event.insightId === "insight-photo"), "with its history");
+    assert.ok(!contents.reflections.some((reflection) => reflection.insightId === "insight-photo"));
+    assert.equal(contents.insights.find((insight) => insight.id === "insight-captioned")!.imagePath, null);
+
+    const opened = await open(await seal(contents));
+    assert.deepEqual(opened.omissions, contents.omissions, "the archive itself says it is incomplete");
+    await target.store.replaceAllRows(opened, {});
+    assert.deepEqual((await target.store.exportRows()).insights.map((insight) => insight.id).sort(), ["insight-captioned", "insight-paused", "insight-text"]);
+    assert.match(describeOmissions(opened.omissions!, "then"), /2 photos couldn't be read when it was made; 1 photo-only insight was left out.*1 insight was saved without its photo/);
+  } finally { source.close(); target.close(); }
+});
+
+test("a complete backup carries no omissions", async () => {
+  const h = await deviceWithPhotos();
+  try {
+    const reads = new Map<string, PhotoRead>([["insight-photo", ok("a")], ["insight-captioned", ok("b")]]);
+    const contents = assembleBackupContents(await h.store.exportRows(), reads, h.clock().toISOString());
+    assert.equal(contents.omissions, undefined);
+    assert.equal(Object.keys(contents.photos).length, 2);
+    assert.equal((await open(await seal(contents))).omissions, undefined);
+  } finally { h.close(); }
+});
+
+test("import limits: key cost stays within 64 MiB and oversized archives are refused before decryption", async () => {
+  const { N, r, p } = BACKUP_LIMITS.maxKdf;
+  assert.ok(128 * N * r * p <= 64 * 1024 * 1024, "scrypt memory ceiling");
+  assert.ok(128 * DEFAULT_KDF.N * DEFAULT_KDF.r <= 128 * N * r, "today's archives stay within the ceiling");
+
+  const archive = JSON.parse(await seal({}));
+  for (const kdf of [{ N: 2 ** 17 }, { r: 16 }, { p: 2 }]) {
+    assert.throws(() => readBackupHeader(JSON.stringify({ ...archive, kdf: { ...archive.kdf, ...kdf } })),
+      (error: unknown) => error instanceof BackupError && error.code === "not_a_backup", JSON.stringify(kdf));
+  }
+  const small = { ...BACKUP_LIMITS, maxArchiveChars: 1000 };
+  assert.throws(() => readBackupHeader("x".repeat(1001), small), (error: unknown) => error instanceof BackupError && error.code === "too_large");
+});
+
+test("export refuses to make a backup too large to restore", async () => {
+  const h = await populatedDevice();
+  try {
+    const contents = await exportFrom(h);
+    const key = await deriveBackupKey(PASSWORD, newKdfParams(random, FAST_KDF));
+    assert.throws(() => sealBackup(contents, key, random, { ...BACKUP_LIMITS, maxArchiveChars: 500 }),
+      (error: unknown) => error instanceof BackupError && error.code === "too_large");
+    assert.ok(sealBackup(contents, key, random).length > 500, "the normal limit accepts it");
+  } finally { h.close(); }
+});
+
+test("archives with more records than the device can restore are refused", async () => {
+  const h = await populatedDevice();
+  try {
+    const contents = await exportFrom(h);
+    assert.throws(() => validateBackupContents(contents, { ...BACKUP_LIMITS, maxInsights: 2 }),
+      (error: unknown) => error instanceof BackupError && error.code === "too_large");
+    assert.throws(() => validateBackupContents({ ...contents, omissions: { missingPhotos: -1, insightsWithoutPhoto: 0, insightsLeftOut: 0 } }),
+      (error: unknown) => error instanceof BackupError && error.code === "invalid_contents");
+  } finally { h.close(); }
 });

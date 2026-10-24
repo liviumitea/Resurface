@@ -25,22 +25,89 @@ export type BackupContents = {
   settings: BackupSettings;
   /** Plain JPEG bytes as base64, keyed by insight ID; present exactly for insights with an image. */
   photos: Record<string, string>;
+  /** Present only when the user explicitly chose to back up without photos that could not be read. */
+  omissions?: BackupOmissions;
 };
+
+/** What a backup left out: photos that could not be read, and how that affected insights. */
+export type BackupOmissions = { missingPhotos: number; insightsWithoutPhoto: number; insightsLeftOut: number };
+export type PhotoRead = { status: "ok"; bytes: Uint8Array } | { status: "missing" | "unreadable" };
 
 export type KdfParams = { name: "scrypt"; N: number; r: number; p: number; salt: string };
 type Envelope = { format: string; version: number; kdf: KdfParams; cipher: "AES-256-GCM"; nonce: string; ciphertext: string };
 
 /** About 32 MiB of memory; parameters are stored in each archive so they can be raised later. */
 export const DEFAULT_KDF = { N: 2 ** 15, r: 8, p: 1 } as const;
-// Bounds on what an archive may ask for, so a crafted file cannot exhaust memory or time.
-const MAX_KDF = { N: 2 ** 20, r: 16, p: 4 } as const;
 
-export type BackupErrorCode = "not_a_backup" | "unsupported_version" | "wrong_password_or_damaged" | "invalid_contents";
+/**
+ * Work an archive may demand, checked before any parsing or key derivation. The whole archive is
+ * held in memory (several copies while decoding), so the size cap is also enforced on export: the
+ * app never produces a backup it could not restore. The KDF ceiling is 64 MiB (128·N·r bytes).
+ */
+export const BACKUP_LIMITS = {
+  maxArchiveChars: 128 * 1024 * 1024,
+  maxKdf: { N: 2 ** 16, r: 8, p: 1 },
+  maxInsights: 100_000,
+  maxEvents: 1_000_000,
+  maxReflections: 200_000,
+};
+export type BackupLimits = typeof BACKUP_LIMITS;
+
+export type BackupErrorCode = "not_a_backup" | "unsupported_version" | "wrong_password_or_damaged" | "invalid_contents" | "too_large" | "incomplete";
 export class BackupError extends Error {
-  constructor(readonly code: BackupErrorCode, message: string) {
+  constructor(readonly code: BackupErrorCode, message: string, readonly omissions?: BackupOmissions) {
     super(message);
     this.name = "BackupError";
   }
+}
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+/** Itemizes omissions, either before exporting ("now") or when describing a restored backup ("then"). */
+export function describeOmissions({ missingPhotos, insightsWithoutPhoto, insightsLeftOut }: BackupOmissions, when: "now" | "then" = "now"): string {
+  const now = when === "now";
+  const parts = [`${plural(missingPhotos, "photo", "photos")} ${now ? "can't be read on this device" : "couldn't be read when it was made"}`];
+  const verb = (count: number) => (now ? "would be" : count === 1 ? "was" : "were");
+  if (insightsLeftOut) parts.push(`${plural(insightsLeftOut, "photo-only insight", "photo-only insights")} ${verb(insightsLeftOut)} left out with its history`);
+  if (insightsWithoutPhoto) parts.push(`${plural(insightsWithoutPhoto, "insight", "insights")} ${verb(insightsWithoutPhoto)} saved without its photo`);
+  return `${parts.join("; ")}.`;
+}
+
+/**
+ * Builds backup contents from the database rows and the result of reading each photo. Fails closed:
+ * if any photo could not be read, it throws `incomplete` with an itemized count unless the caller
+ * passes `allowIncomplete`, in which case the archive records what was left out.
+ */
+export function assembleBackupContents(
+  rows: Omit<BackupContents, "exportedAt" | "photos" | "omissions">,
+  photoReads: ReadonlyMap<string, PhotoRead>,
+  exportedAt: string,
+  { allowIncomplete = false } = {},
+): BackupContents {
+  const photos: Record<string, string> = {};
+  const leftOut = new Set<string>();
+  const insights: Insight[] = [];
+  const omissions: BackupOmissions = { missingPhotos: 0, insightsWithoutPhoto: 0, insightsLeftOut: 0 };
+  for (const insight of rows.insights) {
+    if (!insight.imagePath) { insights.push(insight); continue; }
+    const read = photoReads.get(insight.id);
+    if (read?.status === "ok") { photos[insight.id] = fromByteArray(read.bytes); insights.push(insight); continue; }
+    omissions.missingPhotos += 1;
+    if (insight.content?.trim()) { omissions.insightsWithoutPhoto += 1; insights.push({ ...insight, imagePath: null, imageMime: null }); }
+    else { omissions.insightsLeftOut += 1; leftOut.add(insight.id); }
+  }
+  if (omissions.missingPhotos && !allowIncomplete) {
+    throw new BackupError("incomplete", `This backup would be incomplete: ${describeOmissions(omissions)}`, omissions);
+  }
+  return validateBackupContents({
+    exportedAt,
+    insights,
+    events: rows.events.filter((event) => !leftOut.has(event.insightId)),
+    reflections: rows.reflections.filter((reflection) => !leftOut.has(reflection.insightId)),
+    settings: rows.settings,
+    photos,
+    ...(omissions.missingPhotos ? { omissions } : {}),
+  });
 }
 
 export type BackupKey = { kdf: KdfParams; key: Uint8Array };
@@ -60,30 +127,37 @@ function associatedData(envelope: Omit<Envelope, "ciphertext">): Uint8Array {
   return new TextEncoder().encode(JSON.stringify([format, version, kdf.name, kdf.N, kdf.r, kdf.p, kdf.salt, cipher, nonce]));
 }
 
-export function sealBackup(contents: BackupContents, { kdf, key }: BackupKey, random: (length: number) => Uint8Array): string {
+export function sealBackup(contents: BackupContents, { kdf, key }: BackupKey, random: (length: number) => Uint8Array, limits: BackupLimits = BACKUP_LIMITS): string {
   const header = { format: BACKUP_FORMAT, version: BACKUP_VERSION, kdf, cipher: "AES-256-GCM" as const, nonce: fromByteArray(random(12)) };
   const plaintext = new TextEncoder().encode(JSON.stringify(contents));
   const ciphertext = gcm(key, toByteArray(header.nonce), associatedData(header)).encrypt(plaintext);
-  return JSON.stringify({ ...header, ciphertext: fromByteArray(ciphertext) } satisfies Envelope);
+  const text = JSON.stringify({ ...header, ciphertext: fromByteArray(ciphertext) } satisfies Envelope);
+  if (text.length > limits.maxArchiveChars) {
+    throw new BackupError("too_large", "This backup would be too large to restore on a phone. Nothing was shared.");
+  }
+  return text;
 }
 
 /** Reads only the unencrypted header, so the caller can derive the key before opening. */
-export function readBackupHeader(text: string): KdfParams {
+export function readBackupHeader(text: string, limits: BackupLimits = BACKUP_LIMITS): KdfParams {
+  if (text.length > limits.maxArchiveChars) {
+    throw new BackupError("too_large", "This backup is too large to restore on this device. Nothing was changed.");
+  }
   let envelope: unknown;
   try { envelope = JSON.parse(text); } catch { throw new BackupError("not_a_backup", "This file isn't a Resurface backup."); }
   if (!isRecord(envelope) || envelope.format !== BACKUP_FORMAT) throw new BackupError("not_a_backup", "This file isn't a Resurface backup.");
   if (envelope.version !== BACKUP_VERSION) throw new BackupError("unsupported_version", "This backup was made by a newer version of Resurface. Update the app, then try again.");
   const kdf = envelope.kdf;
   const valid = isRecord(kdf) && kdf.name === "scrypt" && envelope.cipher === "AES-256-GCM"
-    && isPowerOfTwo(kdf.N) && kdf.N >= 2 ** 10 && kdf.N <= MAX_KDF.N
-    && isInteger(kdf.r) && kdf.r >= 1 && kdf.r <= MAX_KDF.r && isInteger(kdf.p) && kdf.p >= 1 && kdf.p <= MAX_KDF.p
+    && isPowerOfTwo(kdf.N) && kdf.N >= 2 ** 10 && kdf.N <= limits.maxKdf.N
+    && isInteger(kdf.r) && kdf.r >= 1 && kdf.r <= limits.maxKdf.r && isInteger(kdf.p) && kdf.p >= 1 && kdf.p <= limits.maxKdf.p
     && isBase64(kdf.salt) && isBase64(envelope.nonce) && isBase64(envelope.ciphertext);
   if (!valid) throw new BackupError("not_a_backup", "This backup file is damaged or incomplete.");
   return { name: "scrypt", N: kdf.N as number, r: kdf.r as number, p: kdf.p as number, salt: kdf.salt as string };
 }
 
-export function openBackup(text: string, { kdf, key }: BackupKey): BackupContents {
-  const header = readBackupHeader(text);
+export function openBackup(text: string, { kdf, key }: BackupKey, limits: BackupLimits = BACKUP_LIMITS): BackupContents {
+  const header = readBackupHeader(text, limits);
   if (header.salt !== kdf.salt || header.N !== kdf.N || header.r !== kdf.r || header.p !== kdf.p) {
     throw new BackupError("wrong_password_or_damaged", "The key was derived for a different backup.");
   }
@@ -96,7 +170,7 @@ export function openBackup(text: string, { kdf, key }: BackupKey): BackupContent
   }
   let contents: unknown;
   try { contents = JSON.parse(new TextDecoder().decode(plaintext)); } catch { throw invalid("unreadable contents"); }
-  return validateBackupContents(contents);
+  return validateBackupContents(contents, limits);
 }
 
 function invalid(detail: string): BackupError {
@@ -115,11 +189,16 @@ const isOptionalTimestamp = (value: unknown): value is string | null => value ==
 const isLocalDay = (value: unknown) => value === null || (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value));
 
 /** Checks the structure and every cross-reference before anything on the device is touched. */
-export function validateBackupContents(value: unknown): BackupContents {
+export function validateBackupContents(value: unknown, limits: BackupLimits = BACKUP_LIMITS): BackupContents {
   if (!isRecord(value)) throw invalid("not an object");
-  const { exportedAt, insights, events, reflections, settings, photos } = value;
+  const { exportedAt, insights, events, reflections, settings, photos, omissions } = value;
   if (!isTimestamp(exportedAt)) throw invalid("export date");
   if (!Array.isArray(insights) || !Array.isArray(events) || !Array.isArray(reflections) || !isRecord(settings) || !isRecord(photos)) throw invalid("missing sections");
+  if (insights.length > limits.maxInsights || events.length > limits.maxEvents || reflections.length > limits.maxReflections) {
+    throw new BackupError("too_large", "This backup has more records than this device can restore. Nothing was changed.");
+  }
+  const count = (key: string) => isRecord(omissions) && isInteger(omissions[key]) && (omissions[key] as number) >= 0;
+  if (omissions !== undefined && !(count("missingPhotos") && count("insightsWithoutPhoto") && count("insightsLeftOut"))) throw invalid("omissions");
 
   const insightById = new Map<string, Insight>();
   for (const item of insights) {
@@ -180,5 +259,6 @@ export function validateBackupContents(value: unknown): BackupContents {
     reflections: reflections as Reflection[],
     settings: { dailyCap: settings.dailyCap as 1 | 3 | 5, notificationTime: settings.notificationTime, showInsightText: settings.showInsightText },
     photos: photos as Record<string, string>,
+    ...(omissions === undefined ? {} : { omissions: omissions as BackupOmissions }),
   };
 }

@@ -4,8 +4,8 @@ import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 import { fromByteArray, toByteArray } from "base64-js";
 import {
-  BACKUP_EXTENSION, BackupError, deriveBackupKey, newKdfParams, openBackup, readBackupHeader, sealBackup,
-  validateBackupContents, type BackupContents,
+  BACKUP_EXTENSION, BackupError, assembleBackupContents, deriveBackupKey, newKdfParams, openBackup, readBackupHeader,
+  sealBackup, type BackupOmissions, type PhotoRead,
 } from "./backup";
 import type { Insight } from "./domain";
 import {
@@ -110,43 +110,34 @@ export async function deleteInsight(insightId: string): Promise<void> {
 
 /**
  * Writes a password-protected backup to the app cache and verifies it opens before returning.
- * Photos whose encrypted file is missing are left out; the count is returned so the UI can say so.
+ * Fails closed with `incomplete` if any photo cannot be read, unless the user has explicitly
+ * chosen to back up without them, in which case the archive records what was left out.
  */
-export async function createBackupFile(password: string): Promise<{ uri: string; insights: number; missingPhotos: number }> {
+export async function createBackupFile(password: string, { allowIncomplete = false } = {}): Promise<{ uri: string; insights: number; omissions?: BackupOmissions }> {
   const rows = await store.exportRows();
-  const photos: Record<string, string> = {};
-  const dropped = new Set<string>();
-  let missingPhotos = 0;
-  const insights = [];
+  const photoReads = new Map<string, PhotoRead>();
   for (const insight of rows.insights) {
-    const bytes = insight.imagePath ? await readImageBytes(insight.imagePath) : null;
-    if (bytes) photos[insight.id] = fromByteArray(bytes);
-    if (insight.imagePath && !bytes) {
-      missingPhotos += 1;
-      if (!insight.content) { dropped.add(insight.id); continue; }
-      insights.push({ ...insight, imagePath: null, imageMime: null });
-    } else insights.push(insight);
+    if (!insight.imagePath) continue;
+    try {
+      const bytes = await readImageBytes(insight.imagePath);
+      photoReads.set(insight.id, bytes ? { status: "ok", bytes } : { status: "missing" });
+    } catch {
+      photoReads.set(insight.id, { status: "unreadable" });
+    }
   }
-  const contents: BackupContents = validateBackupContents({
-    exportedAt: new Date().toISOString(),
-    insights,
-    events: rows.events.filter((event) => !dropped.has(event.insightId)),
-    reflections: rows.reflections.filter((reflection) => !dropped.has(reflection.insightId)),
-    settings: rows.settings,
-    photos,
-  });
+  const contents = assembleBackupContents(rows, photoReads, new Date().toISOString(), { allowIncomplete });
   const key = await deriveBackupKey(password, newKdfParams(Crypto.getRandomBytes));
   const text = sealBackup(contents, key, Crypto.getRandomBytes);
   const check = openBackup(text, key);
   if (check.insights.length !== contents.insights.length || check.events.length !== contents.events.length
-    || check.reflections.length !== contents.reflections.length || Object.keys(check.photos).length !== Object.keys(photos).length) {
+    || check.reflections.length !== contents.reflections.length || Object.keys(check.photos).length !== Object.keys(contents.photos).length) {
     throw new BackupError("invalid_contents", "The backup could not be verified. Nothing was shared.");
   }
   const file = new File(Paths.cache, `resurface-backup-${contents.exportedAt.slice(0, 10)}.${BACKUP_EXTENSION}`);
   file.create({ overwrite: true });
   file.write(text);
-  await store.track("backup_created");
-  return { uri: file.uri, insights: contents.insights.length, missingPhotos };
+  await store.track(contents.omissions ? "backup_created_incomplete" : "backup_created");
+  return { uri: file.uri, insights: contents.insights.length, ...(contents.omissions ? { omissions: contents.omissions } : {}) };
 }
 
 /** Deletes a backup or picked file from the app cache once it has been shared or read. */
@@ -164,7 +155,7 @@ export function deleteCachedFile(uri: string): void {
  * and its photos written to new files, before the single database transaction that swaps the data.
  * Any failure removes the new photos and leaves current data untouched.
  */
-export async function restoreBackup(text: string, password: string): Promise<{ insights: number }> {
+export async function restoreBackup(text: string, password: string): Promise<{ insights: number; omissions?: BackupOmissions }> {
   const contents = openBackup(text, await deriveBackupKey(password, readBackupHeader(text)));
   const restoreId = id();
   const imagePaths: Record<string, string> = {};
@@ -178,7 +169,7 @@ export async function restoreBackup(text: string, password: string): Promise<{ i
     throw error;
   }
   deleteUnreferencedImages(Object.values(imagePaths));
-  return { insights: contents.insights.length };
+  return { insights: contents.insights.length, ...(contents.omissions ? { omissions: contents.omissions } : {}) };
 }
 
 /**

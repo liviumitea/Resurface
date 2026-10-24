@@ -12,7 +12,7 @@ import {
   StyleSheet, Switch, Text, TextInput, View, useWindowDimensions,
 } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH } from "./src/backup";
+import { BACKUP_LIMITS, BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH, describeOmissions } from "./src/backup";
 import { addCalendarDays, isValidInsight, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
 import { clearTransientCaches, deletePickedImageFromCache, imageDataUri } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
@@ -476,11 +476,10 @@ function ResurfaceApp() {
   const backupMessage = (error: unknown) =>
     error instanceof BackupError ? error.message : "Something went wrong. Nothing on this device was changed.";
 
-  const shareBackup = async (backup: { uri: string; missingPhotos: number }) => {
+  const shareBackup = async (backup: { uri: string }) => {
     try {
       if (!(await Sharing.isAvailableAsync())) throw new Error("Sharing isn't available on this device.");
       await Sharing.shareAsync(backup.uri, { mimeType: "application/octet-stream", UTI: BACKUP_UTI, dialogTitle: "Save your Resurface backup" });
-      if (backup.missingPhotos) Alert.alert("Backup created", `${backup.missingPhotos} photo${backup.missingPhotos === 1 ? " was" : "s were"} missing on this device and couldn't be included.`);
     } catch (error) { Alert.alert("Backup not shared", backupMessage(error)); }
     finally {
       deleteCachedFile(backup.uri);
@@ -491,12 +490,22 @@ function ResurfaceApp() {
   // sheet has been dismissed.
   // If the share sheet never reports back, Cancel stays available while sharing; a late result
   // from an abandoned session cannot close a newer sheet. A stranded file is cleared at launch.
-  const createBackup = async () => {
+  // A backup is complete or it is not made: unreadable photos stop it before anything is shared,
+  // and the user may then explicitly choose an archive that records what it leaves out.
+  const createBackup = async (allowIncomplete = false) => {
     const session = ++backupSession.current;
     setBackupBusy(true);
     let result: Awaited<ReturnType<typeof createBackupFile>>;
-    try { result = await createBackupFile(backupPassword); }
-    catch (error) { Alert.alert("Backup not created", backupMessage(error)); return; }
+    try { result = await createBackupFile(backupPassword, { allowIncomplete }); }
+    catch (error) {
+      if (error instanceof BackupError && error.code === "incomplete" && error.omissions) {
+        Alert.alert("Some photos can't be backed up", `${describeOmissions(error.omissions)} Nothing has been shared yet.`, [
+          { text: "Cancel", style: "cancel" },
+          { text: "Back up without them", style: "destructive", onPress: () => { void createBackup(true); } },
+        ]);
+      } else Alert.alert("Backup not created", backupMessage(error));
+      return;
+    }
     finally { setBackupBusy(false); }
     setBackupPassword("");
     setBackupConfirm("");
@@ -522,6 +531,11 @@ function ResurfaceApp() {
             const picked = await DocumentPicker.getDocumentAsync({ type: "*/*", copyToCacheDirectory: true, multiple: false });
             const asset = picked.canceled ? null : picked.assets[0];
             if (!asset) return;
+            if (asset.size !== undefined && asset.size > BACKUP_LIMITS.maxArchiveChars) {
+              deleteCachedFile(asset.uri);
+              Alert.alert("Backup too large", "This file is too large to restore on this device. Nothing on this device was changed.");
+              return;
+            }
             try { setRestoreText(await new File(asset.uri).text()); }
             finally { deleteCachedFile(asset.uri); }
             openBackupSheet("restore");
@@ -542,7 +556,7 @@ function ResurfaceApp() {
       const next = await getSettings();
       setSettings(next);
       try { await reconcileNotifications(next); } catch (error) { report(error); }
-      Alert.alert("Backup restored", `${result.insights} insight${result.insights === 1 ? "" : "s"} restored.`);
+      Alert.alert(result.omissions ? "Incomplete backup restored" : "Backup restored", `${result.insights} insight${result.insights === 1 ? "" : "s"} restored.${result.omissions ? ` In this backup, ${describeOmissions(result.omissions, "then")}` : ""}`);
       await goToday();
     } catch (error) { Alert.alert("Backup not restored", backupMessage(error)); }
     finally { setBackupBusy(false); }
