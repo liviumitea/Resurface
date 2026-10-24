@@ -20,9 +20,9 @@ Expo SDK 57 / React Native 0.86 / TypeScript, version 0.1.0.
 - `App.tsx` — navigation and screens, backup/restore panel (an in-screen overlay, not a native Modal), app-switcher `PrivacyCover`.
 - `src/domain.ts` — models and pure rules: scheduling, notification planning, stale-notification dismissal.
 - `src/store.ts` — every persistence/lifecycle rule over an injected database, ID generator and clock (Expo-free, so tests run it directly).
-- `src/migrations.ts` — append-only schema migrations on `PRAGMA user_version` (SCRUM-53); `src/storage.ts` runs them on open. Schema 2 adds categories (SCRUM-56); backups with categories are archive v2, others stay v1.
+- `src/migrations.ts` — append-only schema migrations on `PRAGMA user_version` (SCRUM-53); `src/storage.ts` runs them on open. Schema 2 adds categories (SCRUM-56), and schema 3 adds source/favorite fields (SCRUM-42).
 - `src/storage.ts` — opens SQLCipher, owns keys, binds the store; backup file creation/restore; `StorageError` reasons; key-loss `setAsideUnreadableData()`.
-- `src/backup.ts` — v1 archive: scrypt (N=2^15, r=8, p=1) + AES-256-GCM via pinned `@noble/*` 2.4.0, header authenticated, strict validation.
+- `src/backup.ts` — versioned v1–v3 archives: scrypt (N=2^15, r=8, p=1) + AES-256-GCM via pinned `@noble/*` 2.4.0, header authenticated, strict validation. Newer archives carry categories and source/favorite fields while older archives remain readable.
 - `src/media.ts` — photo encryption, photo paths resolved by file name, launch-time cache sweep.
 - `src/i18n.ts` — English/Romanian UI strings, plural rules, locale dates; every user-visible string goes through `t()` (tests enforce matching keys/placeholders). Native permission strings live in `locales/*.json`.
 - `src/notifications.ts` — local reminder reconciliation. `src/ui.tsx`, `src/theme.ts` — components and palette.
@@ -59,16 +59,12 @@ Not verified: any physical device; Android beyond CI build (no Android device av
 
 Backup fail-closed + restore limits; separate first-save and core-loop metrics; SCRUM-53 versioned migrations (schema now 3); SCRUM-54 "Seen today" revisit; SCRUM-55 backup checkup/verify; SCRUM-56 categories (archive v2); SCRUM-57 English/Romanian localization with a language setting; SCRUM-42 sources and favorites (archive v3); SCRUM-48 dependency review (SDK 57 patches applied; build-tool-only advisories documented). Each was checked on the iOS 27 simulator in a Release build; none has physical-device acceptance. Jira has a comment with evidence on every ticket; no statuses were transitioned.
 
-Remaining work needs a physical device (SCRUM-31, 52, screen-reader passes), accounts (SCRUM-47 signing), pilot evidence (SCRUM-40, 44, 45, 49) or a device prototype (SCRUM-41 share-into is experimental in SDK 57).
+The owner has chosen a feature-first phase and deferred physical-device testing for now. The next implementable work is Library/history polish (SCRUM-44), followed by a carefully scoped Share Sheet prototype (SCRUM-41), photo/OCR feedback (SCRUM-43), and optional reminder timing (SCRUM-40); see `PRODUCT_ROADMAP.md`. Device checks (SCRUM-31/35/38/52), signing/account access (SCRUM-47) and pilot evidence (SCRUM-45/46) remain release gates, not completed work. Share-into is experimental in SDK 57, so a prototype is not a shipping decision.
 
 ## Suggested next steps
 
-The 24 October review and new SCRUM-52–57 links in `PRODUCT_ROADMAP.md` supersede the ordering below. Backup completeness, resource limits, and metric separation are now implemented with automated tests; physical-device acceptance, especially photo performance and photo-containing backup/restore, remains open. The notes below remain useful implementation context.
+Follow the ordered, feature-first steps and acceptance gates in `PRODUCT_ROADMAP.md`. Start with SCRUM-44 Library/history polish; categories, Romanian localization, source/favorites and backup checkup have already been implemented, so do not rebuild them or treat Jira's unchanged status as the code state. Keep automated, simulator, native-device and pilot evidence distinct in every update.
 
-0. **Photo save is slow on the simulator — benchmark on a real iPhone (start here).** 23 Oct: legacy `manipulateAsync` took 13–115 s on a library HEIC; byte read, AES encryption and write took under 50 ms combined. 24 Oct: switched to SDK 57's contextual `ImageManipulator.manipulate().renderAsync()`; `render` (HEIC decode + resize) still took 88 s, JPEG save 0.1 s, encrypt+write 0.12 s. The simulator decodes HEIC in software, so these numbers likely overstate a device. A compatible/JPEG picker representation (`preferredAssetRepresentationMode: Compatible`, `quality < 1`) was tried but could not be measured (AXe stopped reaching the picker) and was reverted. Next: time pick → save on a physical iPhone; if still slow, try the compatible picker mode there and agree a latency target. Photos are downscaled to 2048 px (4 MB → 0.4–0.7 MB encrypted). Backup/restore with photos is still untested; the simulator holds photo insights for it.
-1. Physical iPhone acceptance (SCRUM-31): full core loop, notifications/deep links, VoiceOver, backup/restore with photos, app update keeping data. Then close SCRUM-33/51 with evidence.
-2. Signed beta distribution (backlog item 19) once an Apple developer account and bundle signing are available.
-3. Android device or emulator acceptance when available; add FLAG_SECURE if the app-switcher cover is required there.
-4. P1 capture and retrieval (share-sheet capture, source/favorites) only after pilot feedback; sync stays conditional P2 discovery.
+Photo-performance context for the deferred SCRUM-52 gate: on the simulator, legacy `manipulateAsync` took 13–115 seconds for library HEIC and SDK 57's contextual image-manipulator render still took 88 seconds, while JPEG save and encrypt/write were fast. The simulator may overstate hardware latency. No physical-device measurement exists, and photo-containing restore in the native app remains unverified. Do not claim either is solved because the unit-test archive round trip passes.
 
 When completing work, update the relevant Jira issue with evidence, commit and push, and distinguish automated validation from device acceptance.
