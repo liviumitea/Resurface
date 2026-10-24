@@ -27,3 +27,15 @@ test("notifications schedule after due time and in the user's local day", () => 
 test("feedback stays occasional", () => {
   assert.deepEqual([1, 2, 3, 4, 5, 6].filter(shouldAskValueFeedback), [1, 3, 6]);
 });
+
+test("shared text becomes the insight; a lone link becomes the source; nothing usable gives no draft", async () => {
+  const { draftFromShared } = await import("../src/domain");
+  assert.deepEqual(draftFromShared([{ shareType: "text", value: "  A quote worth keeping " }]), { content: "A quote worth keeping", source: null });
+  assert.deepEqual(draftFromShared([{ shareType: "url", value: "https://example.com/essay" }]), { content: "", source: "https://example.com/essay" });
+  assert.deepEqual(draftFromShared([{ shareType: "text", value: "https://example.com/a" }]), { content: "", source: "https://example.com/a" }, "a text share that is just a link");
+  assert.deepEqual(draftFromShared([{ shareType: "text", value: "Read this" }, { shareType: "url", value: "https://example.com/b" }]), { content: "Read this", source: "https://example.com/b" });
+  assert.deepEqual(draftFromShared([{ shareType: "url", value: "https://a.example" }, { shareType: "url", value: "https://b.example" }]), { content: "https://b.example", source: "https://a.example" });
+  assert.equal(draftFromShared([{ shareType: "image", value: "file:///tmp/x.jpg" }]), null, "images are not supported yet");
+  assert.equal(draftFromShared([{ shareType: "text", value: "   " }]), null);
+  assert.equal(draftFromShared([{ shareType: "url", value: `https://example.com/${"x".repeat(300)}` }])!.source!.length, 200);
+});

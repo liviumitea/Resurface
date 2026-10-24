@@ -164,6 +164,30 @@ export function staleNotificationIds(
     .map(({ identifier }) => identifier);
 }
 
+export type SharedItem = { shareType: string; value: string };
+export type SharedDraft = { content: string; source: string | null };
+
+const SINGLE_URL = /^https?:\/\/\S+$/i;
+
+/**
+ * Turns content shared from another app into an editable capture draft (text and links only for
+ * now). A lone link becomes the source so the user writes the insight in their own words; other
+ * text becomes the insight text. Returns null when nothing usable was shared.
+ */
+export function draftFromShared(items: SharedItem[]): SharedDraft | null {
+  const texts: string[] = [];
+  let source: string | null = null;
+  for (const item of items) {
+    const value = item.value?.trim() ?? "";
+    if (!value) continue;
+    if (item.shareType === "url" || (item.shareType === "text" && SINGLE_URL.test(value))) {
+      if (!source) source = value.slice(0, MAX_SOURCE_LENGTH); else texts.push(value);
+    } else if (item.shareType === "text") texts.push(value);
+  }
+  if (!texts.length && !source) return null;
+  return { content: texts.join("\n\n"), source };
+}
+
 export function shouldAskValueFeedback(shownCount: number): boolean {
   return shownCount === 1 || shownCount % 3 === 0;
 }

@@ -8,13 +8,13 @@ import * as Notifications from "expo-notifications";
 import { extractTextFromImage, isSupported as isOcrSupported } from "expo-text-extractor";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert, AppState, BackHandler, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
+  Alert, AppState, BackHandler, Image, Linking, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
   StyleSheet, Switch, Text, TextInput, View, useWindowDimensions,
 } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { BACKUP_LIMITS, BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH, type BackupOmissions } from "./src/backup";
 import { formatDate, formatDateTime, formatLongDay, resolveLanguage, setLanguage, t, type MessageKey } from "./src/i18n";
-import { MAX_CATEGORY_NAME_LENGTH, MAX_SOURCE_LENGTH, addCalendarDays, type LibraryItem, type LibrarySort, isValidInsight, type Category, type CategoryWithCount, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
+import { MAX_CATEGORY_NAME_LENGTH, MAX_SOURCE_LENGTH, addCalendarDays, draftFromShared, type LibraryItem, type LibrarySort, isValidInsight, type Category, type CategoryWithCount, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
 import { clearTransientCaches, deletePickedImageFromCache, imageDataUri } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
@@ -152,6 +152,8 @@ function ResurfaceApp() {
   const [busy, setBusy] = useState(false);
   const [route, setRoute] = useState<Route>("onboarding");
   const [settings, setSettings] = useState<Settings | null>(null);
+  const settingsRef = useRef<Settings | null>(null);
+  settingsRef.current = settings;
   const [insightCount, setInsightCount] = useState(0);
   const [todayItems, setTodayItems] = useState<TodayItem[]>([]);
   const [todayIndex, setTodayIndex] = useState(0);
@@ -298,6 +300,52 @@ function ResurfaceApp() {
     });
     return () => { live = false; listener.remove(); };
   }, [goToday, handleNotification, startAttempt]);
+
+  // Content shared from another app arrives through the share extension, which opens
+  // resurface://expo-sharing. It sits unencrypted in the shared app-group store until read, so it
+  // is read and cleared at once and kept only as an in-memory draft; nothing is saved without Save.
+  const routeRef = useRef(route);
+  routeRef.current = route;
+  const draftRef = useRef("");
+  draftRef.current = captureContent;
+  const readyRef = useRef(false);
+  readyRef.current = ready && !fatalError && !!settings;
+
+  const openSharedContent = useCallback(() => {
+    if (!readyRef.current) return;
+    let items: { shareType: string; value: string }[];
+    try {
+      items = Sharing.getSharedPayloads();
+      if (!items.length) return;
+      Sharing.clearSharedPayloads();
+    } catch { return; }
+    const draft = draftFromShared(items);
+    if (!draft) { Alert.alert(t("share.unsupportedTitle"), t("share.unsupportedBody")); return; }
+    const open = () => {
+      beginCapture(settingsRef.current?.onboardingComplete ? "today" : "onboarding");
+      setCaptureContent(draft.content);
+      setCaptureSource(draft.source ?? "");
+      void track("share_received").catch(() => undefined);
+    };
+    if (routeRef.current === "capture" && draftRef.current.trim()) {
+      Alert.alert(t("share.replaceTitle"), t("share.replaceBody"), [
+        { text: t("common.cancel"), style: "cancel" },
+        { text: t("share.replaceAction"), onPress: open },
+      ]);
+    } else open();
+  // beginCapture reads only setters and the current photo, so a stable callback is fine here.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (ready && settings && !fatalError) openSharedContent();
+  }, [ready, !!settings, fatalError, openSharedContent]);
+
+  useEffect(() => {
+    const link = Linking.addEventListener("url", ({ url }) => { if (url.includes("expo-sharing")) openSharedContent(); });
+    const foreground = AppState.addEventListener("change", (state) => { if (state === "active") openSharedContent(); });
+    return () => { link.remove(); foreground.remove(); };
+  }, [openSharedContent]);
 
   const retryStart = () => {
     setFatalError(null);
