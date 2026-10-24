@@ -29,7 +29,12 @@
               ]
             }
           }
-        ]
+        ],
+        "CFBundleLocalizations": [
+          "en",
+          "ro"
+        ],
+        "CFBundleDevelopmentRegion": "en"
       }
     },
     "android": {
@@ -68,6 +73,10 @@
     ],
     "experiments": {
       "tsconfigPaths": true
+    },
+    "locales": {
+      "en": "./locales/en.json",
+      "ro": "./locales/ro.json"
     }
   }
 }

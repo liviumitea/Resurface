@@ -70,6 +70,7 @@ export type BackupStatus = {
 const LAST_VERIFIED_KEY = "backup.lastVerified";
 
 export const DEFAULT_SETTINGS: Settings = {
+  language: "system",
   dailyCap: 3,
   notificationTime: "09:00",
   showInsightText: false,

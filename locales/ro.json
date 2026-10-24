@@ -1,0 +1,6 @@
+{
+  "ios": {
+    "NSCameraUsageDescription": "Fă fotografii ale lucrurilor pe care vrei să le ții minte.",
+    "NSPhotoLibraryUsageDescription": "Alege fotografii ale lucrurilor pe care vrei să le ții minte."
+  }
+}

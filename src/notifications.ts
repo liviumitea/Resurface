@@ -1,5 +1,6 @@
 import * as Notifications from "expo-notifications";
 import { planNotifications, staleNotificationIds, type Settings } from "./domain";
+import { genericNotificationBodies, t } from "./i18n";
 import { clearFutureNotificationPlans, notificationCandidates, setNotificationPlan } from "./storage";
 
 Notifications.setNotificationHandler({
@@ -29,7 +30,8 @@ export async function reconcileNotifications(settings: Settings, clock = new Dat
   const permission = await Notifications.getPermissionsAsync();
   if (!permission.granted) return;
 
-  for (const plan of planNotifications(candidates, settings, clock)) {
+  const texts = { genericTitle: t("notification.genericTitle"), genericBody: t("notification.genericBody"), personalTitle: t("notification.personalTitle") };
+  for (const plan of planNotifications(candidates, settings, clock, texts)) {
     const notificationId = await Notifications.scheduleNotificationAsync({
       content: { title: plan.title, body: plan.body, data: { eventId: plan.eventId, insightId: plan.insightId } },
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: plan.when },
@@ -48,7 +50,7 @@ async function dismissStaleNotifications(pendingEventIds: Set<string>, settings:
     eventId: typeof request.content.data?.eventId === "string" ? request.content.data.eventId : null,
     body: request.content.body,
   }));
-  for (const identifier of staleNotificationIds(presented, pendingEventIds, settings.showInsightText)) {
+  for (const identifier of staleNotificationIds(presented, pendingEventIds, settings.showInsightText, genericNotificationBodies())) {
     await Notifications.dismissNotificationAsync(identifier);
   }
 }

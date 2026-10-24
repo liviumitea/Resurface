@@ -12,7 +12,8 @@ import {
   StyleSheet, Switch, Text, TextInput, View, useWindowDimensions,
 } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { BACKUP_LIMITS, BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH, describeOmissions } from "./src/backup";
+import { BACKUP_LIMITS, BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH, type BackupOmissions } from "./src/backup";
+import { formatDate, formatDateTime, formatLongDay, resolveLanguage, setLanguage, t, type MessageKey } from "./src/i18n";
 import { MAX_CATEGORY_NAME_LENGTH, addCalendarDays, isValidInsight, type Category, type CategoryWithCount, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
 import { clearTransientCaches, deletePickedImageFromCache, imageDataUri } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
@@ -30,12 +31,13 @@ type Route = "onboarding" | "capture-choice" | "capture" | "photo" | "saved" | "
 type CaptureOrigin = "onboarding" | "today" | "library";
 type TodayStatus = "loading" | "ready" | "error";
 
-function formatDate(value: string): string {
-  return new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
-}
-
-function formatDateTime(value: string): string {
-  return new Date(value).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+/** Itemized, translated description of what a backup leaves (or left) out. */
+function omissionsText(omissions: BackupOmissions, when: "now" | "then"): string {
+  const suffix = when === "now" ? "Now" : "Then";
+  const parts = [t(`omissions.photos${suffix}` as MessageKey, { count: omissions.missingPhotos })];
+  if (omissions.insightsLeftOut) parts.push(t(`omissions.leftOut${suffix}` as MessageKey, { count: omissions.insightsLeftOut }));
+  if (omissions.insightsWithoutPhoto) parts.push(t(`omissions.withoutPhoto${suffix}` as MessageKey, { count: omissions.insightsWithoutPhoto }));
+  return `${parts.join("; ")}.`;
 }
 
 function InsightImage({ path, height = 260 }: { path: string | null; height?: number }) {
@@ -52,10 +54,10 @@ function InsightImage({ path, height = 260 }: { path: string | null; height?: nu
     return () => { active = false; };
   }, [path, attempt]);
   if (!path) return null;
-  if (state === "missing") return <View style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="image-outline" size={28} color={palette.muted} /><Text style={screenStyles.imageMessage}>The original photo isn't on this device.</Text></View>;
-  if (state === "error") return <View style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="alert-circle-outline" size={28} color={palette.muted} /><Text style={screenStyles.imageMessage}>This photo couldn't be opened. It hasn't been changed.</Text><Pressable accessibilityRole="button" accessibilityLabel="Try opening the photo again" onPress={() => setAttempt((value) => value + 1)} style={screenStyles.imageRetryTarget}><Text style={screenStyles.imageRetry}>Try again</Text></Pressable></View>;
-  if (!uri) return <View accessibilityLabel="Loading photo" style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="image-outline" size={28} color={palette.muted} /></View>;
-  return <Image source={{ uri }} resizeMode="contain" style={[screenStyles.image, { height }]} accessibilityLabel="Original saved image" />;
+  if (state === "missing") return <View style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="image-outline" size={28} color={palette.muted} /><Text style={screenStyles.imageMessage}>{t("image.missing")}</Text></View>;
+  if (state === "error") return <View style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="alert-circle-outline" size={28} color={palette.muted} /><Text style={screenStyles.imageMessage}>{t("image.error")}</Text><Pressable accessibilityRole="button" accessibilityLabel={t("image.retryLabel")} onPress={() => setAttempt((value) => value + 1)} style={screenStyles.imageRetryTarget}><Text style={screenStyles.imageRetry}>{t("common.tryAgain")}</Text></Pressable></View>;
+  if (!uri) return <View accessibilityLabel={t("image.loading")} style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="image-outline" size={28} color={palette.muted} /></View>;
+  return <Image source={{ uri }} resizeMode="contain" style={[screenStyles.image, { height }]} accessibilityLabel={t("image.label")} />;
 }
 
 function InsightCard({ insight, compact = false }: { insight: Insight; compact?: boolean }) {
@@ -65,7 +67,7 @@ function InsightCard({ insight, compact = false }: { insight: Insight; compact?:
       {!!insight.content && <Text style={compact ? screenStyles.cardTextCompact : screenStyles.cardText}>{insight.content}</Text>}
       <InsightImage path={insight.imagePath} height={compact ? 100 : 250} />
       {!!insight.context && !compact && <Text style={screenStyles.context}>{insight.context}</Text>}
-      <Text style={screenStyles.savedDate}>Saved {formatDate(insight.createdAt)}</Text>
+      <Text style={screenStyles.savedDate}>{t("common.savedOn", { date: formatDate(insight.createdAt) })}</Text>
     </Surface>
   );
 }
@@ -83,26 +85,26 @@ function CategoryChips({ categories, selected, onToggle, onCreate }: {
   return <View style={screenStyles.chipWrap}>
     {categories.map((category) => {
       const on = selected.includes(category.id);
-      return <Pressable key={category.id} accessibilityRole="checkbox" accessibilityState={{ checked: on }} accessibilityLabel={`Category ${category.name}`} onPress={() => onToggle(category.id)} style={[screenStyles.filter, on && screenStyles.selectedFilter]}>
+      return <Pressable key={category.id} accessibilityRole="checkbox" accessibilityState={{ checked: on }} accessibilityLabel={t("category.label", { name: category.name })} onPress={() => onToggle(category.id)} style={[screenStyles.filter, on && screenStyles.selectedFilter]}>
         <Text style={[screenStyles.filterText, on && screenStyles.selectedFilterText]}>{category.name}</Text>
       </Pressable>;
     })}
     {adding
       ? <View style={screenStyles.newCategory}>
-          <TextInput autoFocus clearButtonMode="while-editing" value={name} onChangeText={setName} maxLength={MAX_CATEGORY_NAME_LENGTH} placeholder="New category" placeholderTextColor={palette.muted} returnKeyType="done" onSubmitEditing={() => { void add(); }} style={[screenStyles.search, screenStyles.flex]} accessibilityLabel="New category name" />
-          <Action kind="secondary" label="Add" disabled={!name.trim()} onPress={() => { void add(); }} />
+          <TextInput autoFocus clearButtonMode="while-editing" value={name} onChangeText={setName} maxLength={MAX_CATEGORY_NAME_LENGTH} placeholder={t("category.new")} placeholderTextColor={palette.muted} returnKeyType="done" onSubmitEditing={() => { void add(); }} style={[screenStyles.search, screenStyles.flex]} accessibilityLabel={t("category.newName")} />
+          <Action kind="secondary" label={t("common.add")} disabled={!name.trim()} onPress={() => { void add(); }} />
         </View>
-      : <Pressable accessibilityRole="button" onPress={() => setAdding(true)} style={[screenStyles.filter, screenStyles.addChip]}><Text style={screenStyles.filterText}>+ New category</Text></Pressable>}
+      : <Pressable accessibilityRole="button" onPress={() => setAdding(true)} style={[screenStyles.filter, screenStyles.addChip]}><Text style={screenStyles.filterText}>{t("category.newChip")}</Text></Pressable>}
   </View>;
 }
 
-function Loading({ message = "Making space for what matters…" }: { message?: string }) {
-  return <Screen scroll={false}><View style={screenStyles.center}><View style={screenStyles.loadingMark}><Ionicons name="sparkles" size={34} color={palette.accentDark} /></View><Text style={screenStyles.loadingText}>{message}</Text></View></Screen>;
+function Loading({ message }: { message?: string }) {
+  return <Screen scroll={false}><View style={screenStyles.center}><View style={screenStyles.loadingMark}><Ionicons name="sparkles" size={34} color={palette.accentDark} /></View><Text style={screenStyles.loadingText}>{message ?? t("common.loadingApp")}</Text></View></Screen>;
 }
 
 function TodaySkeleton() {
   return (
-    <View accessible accessibilityRole="progressbar" accessibilityLabel="Loading today's insights">
+    <View accessible accessibilityRole="progressbar" accessibilityLabel={t("today.skeleton")}>
       <View style={[screenStyles.skeletonLine, { width: "55%" }]} />
       <Surface style={screenStyles.insightCard}>
         <View style={screenStyles.cardMark} />
@@ -114,6 +116,9 @@ function TodaySkeleton() {
     </View>
   );
 }
+
+// Until settings load (or if they can't), follow the device language.
+setLanguage(resolveLanguage("system"));
 
 function ResurfaceApp() {
   const [ready, setReady] = useState(false);
@@ -170,8 +175,9 @@ function ResurfaceApp() {
   const [restoreText, setRestoreText] = useState<string | null>(null);
 
   const report = (error: unknown) => {
-    const message = error instanceof Error ? error.message : "Something went wrong. Please try again.";
-    Alert.alert("Resurface", message);
+    // Raw error messages are developer-facing and English; users get a translated, generic one.
+    void error;
+    Alert.alert("Resurface", t("common.genericError"));
   };
 
   // Today owns its loading and error states so a failed query is retryable in place
@@ -230,6 +236,7 @@ function ResurfaceApp() {
         await openStorage();
         const nextSettings = await getSettings();
         if (!live) return;
+        setLanguage(resolveLanguage(nextSettings.language));
         setSettings(nextSettings);
         setInsightCount(await countInsights());
         if (nextSettings.onboardingComplete) await goToday();
@@ -252,7 +259,7 @@ function ResurfaceApp() {
         })();
       } catch (error) {
         if (live) {
-          setFatalError(error instanceof Error ? error.message : "The app could not start.");
+          setFatalError(error instanceof StorageError ? t(`storageError.${error.reason}` as MessageKey) : t("fatal.generic"));
           setFatalReason(error instanceof StorageError ? error.reason : null);
           setReady(true);
         }
@@ -298,6 +305,9 @@ function ResurfaceApp() {
     if (route === "library" || route === "capture" || route === "detail" || route === "categories") void refreshCategories();
   }, [route, refreshCategories]);
 
+  const categoryMessage = (error: unknown) =>
+    error instanceof CategoryError ? t(`category.problem.${error.problem}` as MessageKey, { max: MAX_CATEGORY_NAME_LENGTH }) : t("common.genericError");
+
   const toggle = (ids: string[], categoryId: string) => (ids.includes(categoryId) ? ids.filter((value) => value !== categoryId) : [...ids, categoryId]);
 
   /** Creates a category from a chip field and selects it; reports name problems without losing input. */
@@ -308,7 +318,7 @@ function ResurfaceApp() {
       select?.(category.id);
       return true;
     } catch (error) {
-      Alert.alert("Category not added", error instanceof CategoryError ? error.message : "Something went wrong. Please try again.");
+      Alert.alert(t("category.notAdded"), categoryMessage(error));
       return false;
     }
   };
@@ -354,7 +364,7 @@ function ResurfaceApp() {
         setRoute("photo");
       }
     } catch {
-      Alert.alert("Photo unavailable", "Allow camera or photo access in your device settings, then try again.");
+      Alert.alert(t("capture.photoUnavailableTitle"), t("capture.photoUnavailableBody"));
     }
   };
 
@@ -365,16 +375,16 @@ function ResurfaceApp() {
 
   const extractPhotoText = async () => {
     if (!captureImageUri) return;
-    if (!isOcrSupported) { Alert.alert("Text extraction unavailable", "You can still save the original photo."); return; }
+    if (!isOcrSupported) { Alert.alert(t("ocr.unavailableTitle"), t("ocr.unavailableBody")); return; }
     setOcrBusy(true);
     try {
       const parts = await extractTextFromImage(captureImageUri);
       const text = parts.join("\n").trim();
-      if (!text) { Alert.alert("We couldn't read this image", "Try another photo or keep this one as an image."); return; }
+      if (!text) { Alert.alert(t("ocr.failedTitle"), t("ocr.emptyBody")); return; }
       setCaptureContent(text);
       setRoute("capture");
     } catch {
-      Alert.alert("We couldn't read this image", "Your photo is still here. Try again or keep it as an image.");
+      Alert.alert(t("ocr.failedTitle"), t("ocr.errorBody"));
     } finally { setOcrBusy(false); }
   };
 
@@ -458,8 +468,8 @@ function ResurfaceApp() {
       finally { reflecting.current = false; }
     };
     if (response === "not_anymore") {
-      Alert.alert("Archive this insight?", "It won't resurface again, but you can restore it from Library.", [
-        { text: "Cancel", style: "cancel" }, { text: "Archive", onPress: () => { void commit(); } },
+      Alert.alert(t("reflect.archiveTitle"), t("reflect.archiveBody"), [
+        { text: t("common.cancel"), style: "cancel" }, { text: t("common.archive"), onPress: () => { void commit(); } },
       ]);
     } else await commit();
   };
@@ -485,11 +495,11 @@ function ResurfaceApp() {
         } catch (error) { report(error); }
       })();
     };
-    Alert.alert("Snooze this insight?", "It will come back after the time you choose. This doesn't count as an answer.", [
-      { text: "1 week", onPress: choose(7) },
-      { text: "1 month", onPress: choose(30) },
-      { text: "3 months", onPress: choose(90) },
-      { text: "Cancel", style: "cancel" },
+    Alert.alert(t("snooze.title"), t("snooze.body"), [
+      { text: t("snooze.week"), onPress: choose(7) },
+      { text: t("snooze.month"), onPress: choose(30) },
+      { text: t("snooze.months3"), onPress: choose(90) },
+      { text: t("common.cancel"), style: "cancel" },
     ]);
   };
 
@@ -507,9 +517,9 @@ function ResurfaceApp() {
   const confirmDelete = () => {
     if (!detail) return;
     const insightId = detail.insight.id;
-    Alert.alert("Delete this insight permanently?", "The insight, original photo, reflections and resurfacing history will be removed from this device.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: () => {
+    Alert.alert(t("detail.deleteTitle"), t("detail.deleteBody"), [
+      { text: t("common.cancel"), style: "cancel" },
+      { text: t("common.delete"), style: "destructive", onPress: () => {
         void (async () => {
           try {
             await deleteInsight(insightId);
@@ -524,6 +534,7 @@ function ResurfaceApp() {
   const updateSettings = async (patch: Partial<Settings>) => {
     try {
       const next = await saveSettings(patch);
+      setLanguage(resolveLanguage(next.language));
       setSettings(next);
       await reconcileNotifications(next);
     } catch (error) { report(error); }
@@ -534,7 +545,7 @@ function ResurfaceApp() {
       const granted = await requestNotificationPermission();
       setNotificationGranted(granted);
       if (granted) await reconcileNotifications(await getSettings());
-      else Alert.alert("Notifications are off", "You can enable Resurface notifications in your device settings.");
+      else Alert.alert(t("settings.notificationsOffTitle"), t("settings.notificationsOffBody"));
     } catch (error) { report(error); }
   };
 
@@ -555,13 +566,13 @@ function ResurfaceApp() {
   };
 
   const backupMessage = (error: unknown) =>
-    error instanceof BackupError ? error.message : "Something went wrong. Nothing on this device was changed.";
+    error instanceof BackupError ? t(`backupError.${error.code}` as MessageKey) : t("common.genericErrorUnchanged");
 
   const shareBackup = async (backup: { uri: string }) => {
     try {
-      if (!(await Sharing.isAvailableAsync())) throw new Error("Sharing isn't available on this device.");
-      await Sharing.shareAsync(backup.uri, { mimeType: "application/octet-stream", UTI: BACKUP_UTI, dialogTitle: "Save your Resurface backup" });
-    } catch (error) { Alert.alert("Backup not shared", backupMessage(error)); }
+      if (!(await Sharing.isAvailableAsync())) { Alert.alert(t("backup.notShared"), t("backup.shareUnavailable")); return; }
+      await Sharing.shareAsync(backup.uri, { mimeType: "application/octet-stream", UTI: BACKUP_UTI, dialogTitle: t("backup.shareTitle") });
+    } catch (error) { Alert.alert(t("backup.notShared"), backupMessage(error)); }
     finally {
       deleteCachedFile(backup.uri);
     }
@@ -580,11 +591,11 @@ function ResurfaceApp() {
     try { result = await createBackupFile(backupPassword, { allowIncomplete }); }
     catch (error) {
       if (error instanceof BackupError && error.code === "incomplete" && error.omissions) {
-        Alert.alert("Some photos can't be backed up", `${describeOmissions(error.omissions)} Nothing has been shared yet.`, [
-          { text: "Cancel", style: "cancel" },
-          { text: "Back up without them", style: "destructive", onPress: () => { void createBackup(true); } },
+        Alert.alert(t("backup.incompleteTitle"), t("backup.incompleteBody", { details: omissionsText(error.omissions, "now") }), [
+          { text: t("common.cancel"), style: "cancel" },
+          { text: t("backup.withoutThem"), style: "destructive", onPress: () => { void createBackup(true); } },
         ]);
-      } else Alert.alert("Backup not created", backupMessage(error));
+      } else Alert.alert(t("backup.notCreated"), backupMessage(error));
       return;
     }
     finally { setBackupBusy(false); }
@@ -613,19 +624,19 @@ function ResurfaceApp() {
       if (!asset) return;
       if (asset.size !== undefined && asset.size > BACKUP_LIMITS.maxArchiveChars) {
         deleteCachedFile(asset.uri);
-        Alert.alert("Backup too large", "This file is too large to open on this device. Nothing on this device was changed.");
+        Alert.alert(t("backup.tooLargeTitle"), t("backup.tooLargeBody"));
         return;
       }
       try { setRestoreText(await new File(asset.uri).text()); }
       finally { deleteCachedFile(asset.uri); }
       openBackupSheet(mode);
-    } catch { Alert.alert("Backup not opened", "That file couldn't be read. Nothing on this device was changed."); }
+    } catch { Alert.alert(t("backup.notOpenedTitle"), t("backup.notOpenedBody")); }
   };
 
   const chooseRestoreFile = () => {
-    Alert.alert("Replace everything on this device?", "Restoring a backup replaces all insights, photos, reflections and history currently in Resurface. This can't be undone.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Choose backup", style: "destructive", onPress: () => { void pickBackupFile("restore"); } },
+    Alert.alert(t("backup.replaceTitle"), t("backup.replaceBody"), [
+      { text: t("common.cancel"), style: "cancel" },
+      { text: t("backup.chooseFile"), style: "destructive", onPress: () => { void pickBackupFile("restore"); } },
     ]);
   };
 
@@ -640,10 +651,16 @@ function ResurfaceApp() {
       setBackupPassword("");
       setRestoreText(null);
       refreshBackupStatus();
-      const counts = `${summary.insights} insight${summary.insights === 1 ? "" : "s"}, ${summary.photos} photo${summary.photos === 1 ? "" : "s"}, ${summary.events} history entr${summary.events === 1 ? "y" : "ies"}, ${summary.reflections} reflection${summary.reflections === 1 ? "" : "s"}`;
-      Alert.alert(summary.omissions ? "Backup verified — incomplete" : "Backup verified",
-        `Made ${formatDateTime(summary.exportedAt)} · format v${summary.version} · ${counts}.${summary.omissions ? ` ${describeOmissions(summary.omissions, "then")}` : ""} Nothing on this device was changed.`);
-    } catch (error) { Alert.alert("Backup not verified", backupMessage(error)); }
+      Alert.alert(summary.omissions ? t("backup.verifiedIncompleteTitle") : t("backup.verifiedTitle"), t("backup.verifiedBody", {
+        date: formatDateTime(summary.exportedAt),
+        version: summary.version,
+        insights: t("backup.count.insights", { count: summary.insights }),
+        photos: t("backup.count.photos", { count: summary.photos }),
+        events: t("backup.count.events", { count: summary.events }),
+        reflections: t("backup.count.reflections", { count: summary.reflections }),
+        omissions: summary.omissions ? ` ${omissionsText(summary.omissions, "then")}` : "",
+      }));
+    } catch (error) { Alert.alert(t("backup.notVerified"), backupMessage(error)); }
     finally { setBackupBusy(false); }
   };
 
@@ -659,31 +676,34 @@ function ResurfaceApp() {
       setSettings(next);
       refreshBackupStatus();
       try { await reconcileNotifications(next); } catch (error) { report(error); }
-      Alert.alert(result.omissions ? "Incomplete backup restored" : "Backup restored", `${result.insights} insight${result.insights === 1 ? "" : "s"} restored.${result.omissions ? ` In this backup, ${describeOmissions(result.omissions, "then")}` : ""}`);
+      Alert.alert(result.omissions ? t("backup.restoredIncompleteTitle") : t("backup.restoredTitle"), t("backup.restoredBody", {
+        count: result.insights,
+        omissions: result.omissions ? t("backup.inThisBackup", { details: omissionsText(result.omissions, "then") }) : "",
+      }));
       await goToday();
-    } catch (error) { Alert.alert("Backup not restored", backupMessage(error)); }
+    } catch (error) { Alert.alert(t("backup.notRestored"), backupMessage(error)); }
     finally { setBackupBusy(false); }
   };
 
   if (!ready) return <Loading />;
   const confirmStartFresh = () => {
-    Alert.alert("Start fresh on this device?", "Resurface can't open the data saved here. Starting fresh moves it aside — nothing is deleted — and opens an empty app, so you can restore an encrypted backup. Data moved aside can't be opened in the app.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Start fresh", style: "destructive", onPress: () => {
+    Alert.alert(t("fatal.startFreshTitle"), t("fatal.startFreshBody"), [
+      { text: t("common.cancel"), style: "cancel" },
+      { text: t("fatal.startFreshAction"), style: "destructive", onPress: () => {
         void setAsideUnreadableData().then(retryStart).catch((error: unknown) => {
-          Alert.alert("Couldn't start fresh", error instanceof Error ? error.message : "Nothing was changed. Try again.");
+          Alert.alert(t("fatal.startFreshFailed"), error instanceof StorageError ? t(`storageError.${error.reason}` as MessageKey) : t("fatal.startFreshFailedBody"));
         });
       } },
     ]);
   };
 
-  if (fatalError) return <Screen><Eyebrow>Unable to open</Eyebrow><Title>Your insights are still protected.</Title><Body>{fatalError}</Body><View style={screenStyles.gap24}><Body muted>Resurface will not reset an encrypted database when its key is unavailable. If your device was just restarted, unlock it and try again.</Body></View><View style={screenStyles.gap24}><Action label="Try again" icon="refresh" onPress={retryStart} /></View>{(fatalReason === "key_unavailable" || fatalReason === "cannot_open") && <View style={screenStyles.gap12}><Action kind="ghost" label="Start fresh and restore a backup" onPress={confirmStartFresh} /></View>}</Screen>;
+  if (fatalError) return <Screen><Eyebrow>{t("fatal.eyebrow")}</Eyebrow><Title>{t("fatal.title")}</Title><Body>{fatalError}</Body><View style={screenStyles.gap24}><Body muted>{t("fatal.body")}</Body></View><View style={screenStyles.gap24}><Action label={t("common.tryAgain")} icon="refresh" onPress={retryStart} /></View>{(fatalReason === "key_unavailable" || fatalReason === "cannot_open") && <View style={screenStyles.gap12}><Action kind="ghost" label={t("fatal.startFresh")} onPress={confirmStartFresh} /></View>}</Screen>;
   if (!settings) return <Loading />;
 
   const onboarding = [
-    { icon: "book-outline" as const, title: "You already know more than you remember.", body: "Save the insights, lessons and ideas you don't want to lose." },
-    { icon: "time-outline" as const, title: "Resurface brings them back.", body: "Instead of disappearing into an archive, the things you save return over time." },
-    { icon: "leaf-outline" as const, title: "So they have another chance to matter.", body: "You decide what's worth remembering. Resurface helps keep it accessible." },
+    { icon: "book-outline" as const, title: t("onboarding.title1"), body: t("onboarding.body1") },
+    { icon: "time-outline" as const, title: t("onboarding.title2"), body: t("onboarding.body2") },
+    { icon: "leaf-outline" as const, title: t("onboarding.title3"), body: t("onboarding.body3") },
   ];
   const slide = onboarding[Math.min(settings.onboardingStep, 2)] ?? onboarding[0]!;
 
@@ -691,94 +711,94 @@ function ResurfaceApp() {
     <StatusBar style="dark" />
     {route === "onboarding" && <Screen scroll={false}>
       <View style={screenStyles.onboarding}>
-        <View><Text style={screenStyles.brand}>resurface<Text style={screenStyles.brandDot}>.</Text></Text><Text accessibilityLabel={`Step ${Math.min(settings.onboardingStep + 1, 3)} of 3`} style={screenStyles.step}>0{Math.min(settings.onboardingStep + 1, 3)} / 03</Text></View>
+        <View><Text style={screenStyles.brand}>resurface<Text style={screenStyles.brandDot}>.</Text></Text><Text accessibilityLabel={t("onboarding.step", { step: Math.min(settings.onboardingStep + 1, 3) })} style={screenStyles.step}>0{Math.min(settings.onboardingStep + 1, 3)} / 03</Text></View>
         <View style={screenStyles.onboardingHero}>
           <View style={screenStyles.heroCircle}><Ionicons name={slide.icon} size={72} color={palette.accentDark} /></View>
-          <Eyebrow>A little more accessible</Eyebrow><Title>{slide.title}</Title><Body muted>{slide.body}</Body>
+          <Eyebrow>{t("onboarding.eyebrow")}</Eyebrow><Title>{slide.title}</Title><Body muted>{slide.body}</Body>
         </View>
         <View style={screenStyles.onboardingFooter}>
           <View style={screenStyles.dots}>{onboarding.map((_, index) => <View key={index} style={[screenStyles.dot, settings.onboardingStep === index && screenStyles.activeDot]} />)}</View>
-          <Action label={settings.onboardingStep === 2 ? "Save my first insight" : "Continue"} icon="arrow-forward" onPress={() => {
+          <Action label={settings.onboardingStep === 2 ? t("onboarding.saveFirst") : t("common.continue")} icon="arrow-forward" onPress={() => {
             if (settings.onboardingStep === 2) beginCapture("onboarding");
             else void updateSettings({ onboardingStep: settings.onboardingStep + 1 });
           }} />
-          <Action kind="ghost" label="Restore from a backup" icon="download-outline" onPress={chooseRestoreFile} />
+          <Action kind="ghost" label={t("onboarding.restore")} icon="download-outline" onPress={chooseRestoreFile} />
         </View>
       </View>
     </Screen>}
 
     {route === "capture-choice" && <Screen>
-      <Header title="Capture" back={cancelCaptureChoice} />
-      <Eyebrow>Save what matters</Eyebrow><Title>How would you like to capture it?</Title>
-      <Body muted>Start with your own words or keep a photo. You can edit before saving.</Body>
-      <View style={screenStyles.gap24}><Action label="Write" icon="create-outline" onPress={() => chooseCapture("write")} /></View>
-      <View style={screenStyles.gap12}><Action kind="secondary" label="Take photo" icon="camera-outline" onPress={() => chooseCapture("camera")} /></View>
-      <View style={screenStyles.gap12}><Action kind="secondary" label="Choose photo" icon="images-outline" onPress={() => chooseCapture("library")} /></View>
-      <View style={screenStyles.gap12}><Action kind="ghost" label="Cancel" onPress={cancelCaptureChoice} /></View>
+      <Header title={t("choice.header")} back={cancelCaptureChoice} />
+      <Eyebrow>{t("choice.eyebrow")}</Eyebrow><Title>{t("choice.title")}</Title>
+      <Body muted>{t("choice.body")}</Body>
+      <View style={screenStyles.gap24}><Action label={t("choice.write")} icon="create-outline" onPress={() => chooseCapture("write")} /></View>
+      <View style={screenStyles.gap12}><Action kind="secondary" label={t("choice.takePhoto")} icon="camera-outline" onPress={() => chooseCapture("camera")} /></View>
+      <View style={screenStyles.gap12}><Action kind="secondary" label={t("choice.choosePhoto")} icon="images-outline" onPress={() => chooseCapture("library")} /></View>
+      <View style={screenStyles.gap12}><Action kind="ghost" label={t("common.cancel")} onPress={cancelCaptureChoice} /></View>
     </Screen>}
 
     {route === "capture" && <Screen>
-      <Header title="Save an insight" back={() => { deletePickedImageFromCache(captureImageUri); setCaptureImageUri(null); if (captureOrigin === "onboarding") setRoute("onboarding"); else if (captureOrigin === "library") goLibrary(); else void goToday(); }} />
-      <Eyebrow>Capture</Eyebrow><Title>What do you want to remember?</Title>
-      <TextInput autoFocus multiline textAlignVertical="top" placeholder="A thought, lesson, or idea that matters to you…" placeholderTextColor={palette.muted} value={captureContent} onChangeText={setCaptureContent} style={screenStyles.captureInput} accessibilityLabel="Insight text" />
-      {captureImageUri && <View style={screenStyles.attached}><Ionicons name="image-outline" size={18} color={palette.accentDark} /><Text style={screenStyles.attachedText}>Original photo attached</Text><IconButton icon="close" label="Remove photo" onPress={() => { deletePickedImageFromCache(captureImageUri); setCaptureImageUri(null); }} /></View>}
-      <Text style={screenStyles.fieldLabel}>Why does this matter to you? <Text style={screenStyles.optional}>Optional</Text></Text>
-      <TextInput multiline textAlignVertical="top" placeholder="Add a little context, if you'd like…" placeholderTextColor={palette.muted} value={captureContext} onChangeText={setCaptureContext} style={screenStyles.contextInput} accessibilityLabel="Optional context" />
-      <Text style={screenStyles.fieldLabel}>Categories <Text style={screenStyles.optional}>Optional</Text></Text>
+      <Header title={t("capture.header")} back={() => { deletePickedImageFromCache(captureImageUri); setCaptureImageUri(null); if (captureOrigin === "onboarding") setRoute("onboarding"); else if (captureOrigin === "library") goLibrary(); else void goToday(); }} />
+      <Eyebrow>{t("capture.eyebrow")}</Eyebrow><Title>{t("capture.title")}</Title>
+      <TextInput autoFocus multiline textAlignVertical="top" placeholder={t("capture.placeholder")} placeholderTextColor={palette.muted} value={captureContent} onChangeText={setCaptureContent} style={screenStyles.captureInput} accessibilityLabel={t("capture.textLabel")} />
+      {captureImageUri && <View style={screenStyles.attached}><Ionicons name="image-outline" size={18} color={palette.accentDark} /><Text style={screenStyles.attachedText}>{t("capture.photoAttached")}</Text><IconButton icon="close" label={t("capture.removePhoto")} onPress={() => { deletePickedImageFromCache(captureImageUri); setCaptureImageUri(null); }} /></View>}
+      <Text style={screenStyles.fieldLabel}>{t("capture.contextLabel")} <Text style={screenStyles.optional}>{t("common.optional")}</Text></Text>
+      <TextInput multiline textAlignVertical="top" placeholder={t("capture.contextPlaceholder")} placeholderTextColor={palette.muted} value={captureContext} onChangeText={setCaptureContext} style={screenStyles.contextInput} accessibilityLabel={t("capture.contextA11y")} />
+      <Text style={screenStyles.fieldLabel}>{t("category.field")} <Text style={screenStyles.optional}>{t("common.optional")}</Text></Text>
       <CategoryChips categories={categories} selected={captureCategoryIds} onToggle={(categoryId) => setCaptureCategoryIds((ids) => toggle(ids, categoryId))} onCreate={(name) => addCategory(name, (categoryId) => setCaptureCategoryIds((ids) => [...ids, categoryId]))} />
-      <View style={screenStyles.row}><View style={screenStyles.flex}><Action kind="secondary" icon="camera-outline" label="Take photo" onPress={() => { void pickImage("camera"); }} /></View><View style={screenStyles.flex}><Action kind="secondary" icon="images-outline" label="Choose photo" onPress={() => { void pickImage("library"); }} /></View></View>
-      <View style={screenStyles.gap24}><Action label={busy ? "Saving…" : "Save insight"} icon="bookmark-outline" disabled={busy || !isValidInsight(captureContent, !!captureImageUri)} onPress={() => { void saveCapture(); }} /></View>
-      <Text style={screenStyles.privacyNote}>Your words and photos stay on this device.</Text>
+      <View style={screenStyles.row}><View style={screenStyles.flex}><Action kind="secondary" icon="camera-outline" label={t("choice.takePhoto")} onPress={() => { void pickImage("camera"); }} /></View><View style={screenStyles.flex}><Action kind="secondary" icon="images-outline" label={t("choice.choosePhoto")} onPress={() => { void pickImage("library"); }} /></View></View>
+      <View style={screenStyles.gap24}><Action label={busy ? t("capture.saving") : t("capture.save")} icon="bookmark-outline" disabled={busy || !isValidInsight(captureContent, !!captureImageUri)} onPress={() => { void saveCapture(); }} /></View>
+      <Text style={screenStyles.privacyNote}>{t("capture.privacy")}</Text>
     </Screen>}
 
     {route === "photo" && <Screen>
-      <Header title="Your photo" back={() => setRoute("capture")} />
-      <Eyebrow>Photo capture</Eyebrow><Title>Keep what matters.</Title>
+      <Header title={t("photo.header")} back={() => setRoute("capture")} />
+      <Eyebrow>{t("photo.eyebrow")}</Eyebrow><Title>{t("photo.title")}</Title>
       {captureImageUri && <Image source={{ uri: captureImageUri }} resizeMode="contain" style={screenStyles.photoPreview} />}
-      <Body muted>Save the photo as it is, or turn the visible text into something you can edit. The original stays attached.</Body>
-      <View style={screenStyles.gap24}><Action label="Keep as image" icon="image-outline" onPress={() => { setCaptureContent(""); setRoute("capture"); }} /></View>
-      <View style={screenStyles.gap12}><Action kind="secondary" label={ocrBusy ? "Extracting text…" : "Extract text"} icon="text-outline" disabled={ocrBusy} onPress={() => { void extractPhotoText(); }} /></View>
-      <View style={screenStyles.gap12}><Action kind="ghost" label="Choose another photo" onPress={() => { void pickImage("library"); }} /></View>
+      <Body muted>{t("photo.body")}</Body>
+      <View style={screenStyles.gap24}><Action label={t("photo.keep")} icon="image-outline" onPress={() => { setCaptureContent(""); setRoute("capture"); }} /></View>
+      <View style={screenStyles.gap12}><Action kind="secondary" label={ocrBusy ? t("photo.extracting") : t("photo.extract")} icon="text-outline" disabled={ocrBusy} onPress={() => { void extractPhotoText(); }} /></View>
+      <View style={screenStyles.gap12}><Action kind="ghost" label={t("photo.another")} onPress={() => { void pickImage("library"); }} /></View>
     </Screen>}
 
     {route === "saved" && <Screen scroll={false}>
-      <View style={screenStyles.centerPanel}><View style={screenStyles.successIcon}><Ionicons name="checkmark" size={38} color={palette.accentDark} /></View><Eyebrow>Safely saved</Eyebrow><Title>{firstSave ? "Your first insight is saved." : "Saved."}</Title><Body muted>We'll bring it back after some time has passed.</Body></View>
-      <View style={screenStyles.bottomActions}><Action label="Continue" onPress={() => { void finishSave(); }} /><View style={screenStyles.gap12}><Action kind="ghost" label="View insight" onPress={() => { if (savedInsightId) void openDetail(savedInsightId, "today"); }} /></View></View>
+      <View style={screenStyles.centerPanel}><View style={screenStyles.successIcon}><Ionicons name="checkmark" size={38} color={palette.accentDark} /></View><Eyebrow>{t("saved.eyebrow")}</Eyebrow><Title>{firstSave ? t("saved.firstTitle") : t("saved.title")}</Title><Body muted>{t("saved.body")}</Body></View>
+      <View style={screenStyles.bottomActions}><Action label={t("common.continue")} onPress={() => { void finishSave(); }} /><View style={screenStyles.gap12}><Action kind="ghost" label={t("saved.view")} onPress={() => { if (savedInsightId) void openDetail(savedInsightId, "today"); }} /></View></View>
     </Screen>}
 
     {route === "permission" && <Screen scroll={false}>
-      <View style={screenStyles.centerPanel}><View style={screenStyles.successIcon}><Ionicons name="notifications-outline" size={38} color={palette.accentDark} /></View><Eyebrow>A gentle reminder</Eyebrow><Title>Let Resurface bring it back.</Title><Body muted>Notifications allow the things you've saved to find their way back to you. You can change this later.</Body></View>
-      <View style={screenStyles.bottomActions}><Action label="Enable notifications" onPress={() => { void finishPermission(true); }} /><View style={screenStyles.gap12}><Action kind="ghost" label="Not now" onPress={() => { void finishPermission(false); }} /></View></View>
+      <View style={screenStyles.centerPanel}><View style={screenStyles.successIcon}><Ionicons name="notifications-outline" size={38} color={palette.accentDark} /></View><Eyebrow>{t("permission.eyebrow")}</Eyebrow><Title>{t("permission.title")}</Title><Body muted>{t("permission.body")}</Body></View>
+      <View style={screenStyles.bottomActions}><Action label={t("permission.enable")} onPress={() => { void finishPermission(true); }} /><View style={screenStyles.gap12}><Action kind="ghost" label={t("permission.notNow")} onPress={() => { void finishPermission(false); }} /></View></View>
     </Screen>}
 
     {route === "today" && <Screen scroll={false}>
-      <Header title="resurface." right={<IconButton icon="settings-outline" label="Settings" onPress={() => { void getBetaMetrics().then(setMetrics).catch(report); refreshBackupStatus(); void Notifications.getPermissionsAsync().then((permission) => setNotificationGranted(permission.granted)).catch(report); setRoute("settings"); }} />} />
+      <Header title="resurface." right={<IconButton icon="settings-outline" label={t("today.settings")} onPress={() => { void getBetaMetrics().then(setMetrics).catch(report); refreshBackupStatus(); void Notifications.getPermissionsAsync().then((permission) => setNotificationGranted(permission.granted)).catch(report); setRoute("settings"); }} />} />
       <ScrollView contentContainerStyle={screenStyles.todayContent}>
-        <Eyebrow>{new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</Eyebrow>
-        <Title>Today</Title>
+        <Eyebrow>{formatLongDay(new Date())}</Eyebrow>
+        <Title>{t("today.title")}</Title>
         {todayStatus === "loading" ? <TodaySkeleton />
-          : todayStatus === "error" ? <Surface style={screenStyles.emptyCard}><Ionicons name="cloud-offline-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>Today couldn't load.</Text><Body muted>Your insights are still saved on this device. Nothing was changed or reset.</Body><View style={screenStyles.gap24}><Action label="Try again" icon="refresh" onPress={() => { void goToday(); }} /></View><View style={screenStyles.gap12}><Action kind="ghost" label="Open Library" onPress={goLibrary} /></View></Surface>
-          : todayItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name={insightCount === 0 ? "bookmark-outline" : "sunny-outline"} size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{insightCount === 0 ? "Nothing here yet." : "Nothing to resurface today."}</Text><Body muted>{insightCount === 0 ? "Save something you don't want to lose." : "Some things are better remembered after a little time has passed."}</Body><View style={screenStyles.gap24}><Action label={insightCount === 0 ? "Save your first insight" : "Save something"} onPress={() => beginCapture("today")} /></View></Surface>
-          : todayIndex >= todayItems.length ? <Surface style={screenStyles.emptyCard}><Ionicons name="checkmark-circle-outline" size={38} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>That's all for today.</Text><Body muted>We'll bring more back when the time is right.</Body><View style={screenStyles.gap24}><Action kind="secondary" label="Save something" onPress={() => beginCapture("today")} /></View></Surface>
+          : todayStatus === "error" ? <Surface style={screenStyles.emptyCard}><Ionicons name="cloud-offline-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{t("today.errorTitle")}</Text><Body muted>{t("today.errorBody")}</Body><View style={screenStyles.gap24}><Action label={t("common.tryAgain")} icon="refresh" onPress={() => { void goToday(); }} /></View><View style={screenStyles.gap12}><Action kind="ghost" label={t("today.openLibrary")} onPress={goLibrary} /></View></Surface>
+          : todayItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name={insightCount === 0 ? "bookmark-outline" : "sunny-outline"} size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{insightCount === 0 ? t("today.emptyNewTitle") : t("today.emptyTitle")}</Text><Body muted>{insightCount === 0 ? t("today.emptyNewBody") : t("today.emptyBody")}</Body><View style={screenStyles.gap24}><Action label={insightCount === 0 ? t("today.saveFirst") : t("today.saveSomething")} onPress={() => beginCapture("today")} /></View></Surface>
+          : todayIndex >= todayItems.length ? <Surface style={screenStyles.emptyCard}><Ionicons name="checkmark-circle-outline" size={38} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{t("today.doneTitle")}</Text><Body muted>{t("today.doneBody")}</Body><View style={screenStyles.gap24}><Action kind="secondary" label={t("today.saveSomething")} onPress={() => beginCapture("today")} /></View></Surface>
           : current && <>
-            <Text style={screenStyles.subtitle}>{todayItems.length} {todayItems.length === 1 ? "thing" : "things"} worth remembering</Text>
-            <Text style={screenStyles.counter}>{todayIndex + 1} of {todayItems.length}</Text>
+            <Text style={screenStyles.subtitle}>{t("today.count", { count: todayItems.length })}</Text>
+            <Text style={screenStyles.counter}>{t("today.position", { index: todayIndex + 1, total: todayItems.length })}</Text>
             <InsightCard insight={current.insight} />
-            <View style={screenStyles.gap24}><Action label="Reflect" icon="chatbubble-ellipses-outline" onPress={() => { setRevisitEventId(null); setReflectionText(""); setRoute("reflect"); }} /></View>
-            <View style={screenStyles.gap12}><Action kind="secondary" label="Next" icon="arrow-forward" onPress={() => { void advanceToday(); }} /></View>
-            <Pressable accessibilityRole="button" onPress={() => { void openDetail(current.insight.id, "today"); }}><Text style={screenStyles.textLink}>View insight and history</Text></Pressable>
+            <View style={screenStyles.gap24}><Action label={t("today.reflect")} icon="chatbubble-ellipses-outline" onPress={() => { setRevisitEventId(null); setReflectionText(""); setRoute("reflect"); }} /></View>
+            <View style={screenStyles.gap12}><Action kind="secondary" label={t("today.next")} icon="arrow-forward" onPress={() => { void advanceToday(); }} /></View>
+            <Pressable accessibilityRole="button" onPress={() => { void openDetail(current.insight.id, "today"); }}><Text style={screenStyles.textLink}>{t("today.viewHistory")}</Text></Pressable>
           </>}
         {todayStatus === "ready" && seenToday.length > 0 && <View style={screenStyles.gap24}>
-          <Text maxFontSizeMultiplier={1.8} accessibilityRole="header" style={screenStyles.sectionTitle}>Seen today</Text>
+          <Text maxFontSizeMultiplier={1.8} accessibilityRole="header" style={screenStyles.sectionTitle}>{t("today.seen")}</Text>
           {seenToday.map((item) => {
-            const answer = item.event.response === "yes" ? "Reflected · still relevant" : item.event.response === "not_now" ? "Reflected · paused" : item.event.response === "not_anymore" ? "Reflected · archived" : null;
-            return <Pressable key={item.event.id} accessibilityRole="button" accessibilityLabel={`${item.insight.content || "Saved photo"}. ${answer ?? "Not reflected yet. Opens reflection."}`}
+            const answer = item.event.response === "yes" ? t("today.reflectedYes") : item.event.response === "not_now" ? t("today.reflectedPaused") : item.event.response === "not_anymore" ? t("today.reflectedArchived") : null;
+            return <Pressable key={item.event.id} accessibilityRole="button" accessibilityLabel={`${item.insight.content || t("common.savedPhoto")}. ${answer ?? t("today.notReflectedLabel")}`}
               onPress={() => {
                 if (answer) { void openDetail(item.insight.id, "today"); return; }
                 setRevisitEventId(item.event.id); setReflectionText(""); setRoute("reflect");
               }} style={screenStyles.libraryRow}>
               <View style={screenStyles.libraryIcon}><Ionicons name={answer ? "checkmark-circle-outline" : "chatbubble-ellipses-outline"} size={19} color={palette.accentDark} /></View>
-              <View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{item.insight.content || "Saved photo"}</Text><Text style={screenStyles.libraryDate}>{answer ?? "Not reflected yet · tap to reflect"}</Text></View>
+              <View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{item.insight.content || t("common.savedPhoto")}</Text><Text style={screenStyles.libraryDate}>{answer ?? t("today.notReflected")}</Text></View>
               <Ionicons name="chevron-forward" size={17} color={palette.muted} />
             </Pressable>;
           })}
@@ -788,90 +808,90 @@ function ResurfaceApp() {
     </Screen>}
 
     {route === "reflect" && reflectTarget && <Screen>
-      <Header title="Reflect" back={() => { setRevisitEventId(null); setRoute("today"); }} />
-      <Eyebrow>{revisitEventId ? "Seen earlier today" : "A moment to check in"}</Eyebrow><InsightCard insight={reflectTarget.insight} compact />
-      <View style={screenStyles.gap24}><Title>Does this still resonate?</Title></View>
-      <TextInput multiline textAlignVertical="top" placeholder="Anything you want to add? (optional)" placeholderTextColor={palette.muted} value={reflectionText} onChangeText={setReflectionText} style={screenStyles.contextInput} accessibilityLabel="Optional reflection" />
-      <View style={screenStyles.gap24}><Action label="Yes, it does" onPress={() => { void finishReflection("yes"); }} /></View>
-      <View style={screenStyles.gap12}><Action kind="secondary" label="Not right now · Pause" onPress={() => { void finishReflection("not_now"); }} /></View>
-      <View style={screenStyles.gap12}><Action kind="ghost" label="Not anymore · Archive" onPress={() => { void finishReflection("not_anymore"); }} /></View>
+      <Header title={t("reflect.title")} back={() => { setRevisitEventId(null); setRoute("today"); }} />
+      <Eyebrow>{revisitEventId ? t("reflect.eyebrowRevisit") : t("reflect.eyebrow")}</Eyebrow><InsightCard insight={reflectTarget.insight} compact />
+      <View style={screenStyles.gap24}><Title>{t("reflect.question")}</Title></View>
+      <TextInput multiline textAlignVertical="top" placeholder={t("reflect.notePlaceholder")} placeholderTextColor={palette.muted} value={reflectionText} onChangeText={setReflectionText} style={screenStyles.contextInput} accessibilityLabel={t("reflect.noteLabel")} />
+      <View style={screenStyles.gap24}><Action label={t("reflect.yes")} onPress={() => { void finishReflection("yes"); }} /></View>
+      <View style={screenStyles.gap12}><Action kind="secondary" label={t("reflect.notNow")} onPress={() => { void finishReflection("not_now"); }} /></View>
+      <View style={screenStyles.gap12}><Action kind="ghost" label={t("reflect.notAnymore")} onPress={() => { void finishReflection("not_anymore"); }} /></View>
     </Screen>}
 
     {route === "library" && <Screen scroll={false}>
-      <Header title="Library" />
+      <Header title={t("library.header")} />
       <ScrollView contentContainerStyle={screenStyles.libraryList} keyboardShouldPersistTaps="handled">
-      <View><Eyebrow>What you've saved</Eyebrow><Title>Your insights</Title><TextInput placeholder="Search content or context" placeholderTextColor={palette.muted} value={librarySearch} onChangeText={setLibrarySearch} style={screenStyles.search} accessibilityLabel="Search insights" /></View>
-      <View style={screenStyles.filters}>{(["active", "paused", "archived"] as InsightStatus[]).map((status) => <Pressable key={status} accessibilityRole="tab" accessibilityState={{ selected: libraryStatus === status }} onPress={() => setLibraryStatus(status)} style={[screenStyles.filter, libraryStatus === status && screenStyles.selectedFilter]}><Text style={[screenStyles.filterText, libraryStatus === status && screenStyles.selectedFilterText]}>{status[0]!.toUpperCase() + status.slice(1)}</Text></Pressable>)}</View>
+      <View><Eyebrow>{t("library.eyebrow")}</Eyebrow><Title>{t("library.title")}</Title><TextInput placeholder={t("library.search")} placeholderTextColor={palette.muted} value={librarySearch} onChangeText={setLibrarySearch} style={screenStyles.search} accessibilityLabel={t("library.searchLabel")} /></View>
+      <View style={screenStyles.filters}>{(["active", "paused", "archived"] as InsightStatus[]).map((status) => <Pressable key={status} accessibilityRole="tab" accessibilityState={{ selected: libraryStatus === status }} onPress={() => setLibraryStatus(status)} style={[screenStyles.filter, libraryStatus === status && screenStyles.selectedFilter]}><Text style={[screenStyles.filterText, libraryStatus === status && screenStyles.selectedFilterText]}>{t(`library.status.${status}` as MessageKey)}</Text></Pressable>)}</View>
       {categories.length > 0 && <View style={screenStyles.chipWrap}>
-        {[{ id: null, name: "All categories" }, ...categories].map((category) => {
+        {[{ id: null, name: t("category.all") }, ...categories].map((category) => {
           const on = libraryCategory === category.id;
-          return <Pressable key={category.id ?? "all"} accessibilityRole="radio" accessibilityState={{ checked: on }} accessibilityLabel={category.id ? `Show category ${category.name}` : "Show all categories"} onPress={() => setLibraryCategory(category.id)} style={[screenStyles.filter, on && screenStyles.selectedFilter]}>
+          return <Pressable key={category.id ?? "all"} accessibilityRole="radio" accessibilityState={{ checked: on }} accessibilityLabel={category.id ? t("category.show", { name: category.name }) : t("category.showAll")} onPress={() => setLibraryCategory(category.id)} style={[screenStyles.filter, on && screenStyles.selectedFilter]}>
             <Text style={[screenStyles.filterText, on && screenStyles.selectedFilterText]}>{category.name}</Text>
           </Pressable>;
         })}
       </View>}
-      <Pressable accessibilityRole="button" onPress={() => setRoute("categories")} style={screenStyles.manageLink}><Text style={screenStyles.textLinkInline}>Manage categories</Text></Pressable>
-        {libraryError ? <Surface style={screenStyles.emptyCard}><Ionicons name="cloud-offline-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>Your library couldn't load.</Text><Body muted>Your insights are still saved on this device. Nothing was changed or reset.</Body><View style={screenStyles.gap24}><Action label="Try again" icon="refresh" onPress={() => setLibraryAttempt((attempt) => attempt + 1)} /></View></Surface>
-          : libraryItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="albums-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{librarySearch ? "No matching insights." : libraryCategory ? `No ${libraryStatus} insights in this category.` : `No ${libraryStatus} insights.`}</Text><Body muted>What you save will be here whenever you need it.</Body></Surface>
-          : libraryItems.map((insight) => <Pressable key={insight.id} accessibilityRole="button" onPress={() => { void openDetail(insight.id); }} style={screenStyles.libraryRow}><View style={screenStyles.libraryIcon}><Ionicons name={insight.imagePath ? "image-outline" : "bookmark-outline"} size={19} color={palette.accentDark} /></View><View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{insight.content || "Saved photo"}</Text><Text style={screenStyles.libraryDate}>{formatDate(insight.createdAt)}</Text></View><Ionicons name="chevron-forward" size={17} color={palette.muted} /></Pressable>)}
+      <Pressable accessibilityRole="button" onPress={() => setRoute("categories")} style={screenStyles.manageLink}><Text style={screenStyles.textLinkInline}>{t("category.manage")}</Text></Pressable>
+        {libraryError ? <Surface style={screenStyles.emptyCard}><Ionicons name="cloud-offline-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{t("library.errorTitle")}</Text><Body muted>{t("library.errorBody")}</Body><View style={screenStyles.gap24}><Action label={t("common.tryAgain")} icon="refresh" onPress={() => setLibraryAttempt((attempt) => attempt + 1)} /></View></Surface>
+          : libraryItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="albums-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{librarySearch ? t("library.noMatches") : libraryCategory ? t(`library.emptyInCategory.${libraryStatus}` as MessageKey) : t(`library.empty.${libraryStatus}` as MessageKey)}</Text><Body muted>{t("library.emptyBody")}</Body></Surface>
+          : libraryItems.map((insight) => <Pressable key={insight.id} accessibilityRole="button" onPress={() => { void openDetail(insight.id); }} style={screenStyles.libraryRow}><View style={screenStyles.libraryIcon}><Ionicons name={insight.imagePath ? "image-outline" : "bookmark-outline"} size={19} color={palette.accentDark} /></View><View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{insight.content || t("common.savedPhoto")}</Text><Text style={screenStyles.libraryDate}>{formatDate(insight.createdAt)}</Text></View><Ionicons name="chevron-forward" size={17} color={palette.muted} /></Pressable>)}
       </ScrollView>
       <BottomNav active="library" onToday={() => { void goToday(); }} onCapture={() => openCaptureChoice("library")} onLibrary={goLibrary} />
     </Screen>}
 
     {route === "detail" && detail && <Screen>
-      <Header title="Insight" back={() => { if (detailOrigin === "library") goLibrary(); else if (firstSave && !settings.permissionAsked) setRoute("permission"); else void goToday(); }} />
-      <Eyebrow>{detail.insight.status} · saved {formatDate(detail.insight.createdAt)}</Eyebrow>
+      <Header title={t("detail.header")} back={() => { if (detailOrigin === "library") goLibrary(); else if (firstSave && !settings.permissionAsked) setRoute("permission"); else void goToday(); }} />
+      <Eyebrow>{t("detail.eyebrow", { status: t(`detail.status.${detail.insight.status}` as MessageKey), date: formatDate(detail.insight.createdAt) })}</Eyebrow>
       {editing ? <>
-        <Title>Edit insight</Title>
-        <TextInput multiline textAlignVertical="top" value={editContent} onChangeText={setEditContent} placeholder="What do you want to remember?" style={screenStyles.captureInput} accessibilityLabel="Edit insight text" />
-        <Text style={screenStyles.fieldLabel}>Context</Text><TextInput multiline textAlignVertical="top" value={editContext} onChangeText={setEditContext} style={screenStyles.contextInput} accessibilityLabel="Edit context" />
-        <Text style={screenStyles.fieldLabel}>Categories <Text style={screenStyles.optional}>Optional</Text></Text>
+        <Title>{t("detail.editTitle")}</Title>
+        <TextInput multiline textAlignVertical="top" value={editContent} onChangeText={setEditContent} placeholder={t("capture.title")} style={screenStyles.captureInput} accessibilityLabel={t("detail.editTextLabel")} />
+        <Text style={screenStyles.fieldLabel}>{t("detail.context")}</Text><TextInput multiline textAlignVertical="top" value={editContext} onChangeText={setEditContext} style={screenStyles.contextInput} accessibilityLabel={t("detail.editContextLabel")} />
+        <Text style={screenStyles.fieldLabel}>{t("category.field")} <Text style={screenStyles.optional}>{t("common.optional")}</Text></Text>
         <CategoryChips categories={categories} selected={editCategoryIds} onToggle={(categoryId) => setEditCategoryIds((ids) => toggle(ids, categoryId))} onCreate={(name) => addCategory(name, (categoryId) => setEditCategoryIds((ids) => [...ids, categoryId]))} />
-        <View style={screenStyles.gap24}><Action label="Save changes" disabled={!isValidInsight(editContent, !!detail.insight.imagePath)} onPress={() => { void saveEdit(); }} /></View>
-        <View style={screenStyles.gap12}><Action kind="ghost" label="Cancel" onPress={() => setEditing(false)} /></View>
+        <View style={screenStyles.gap24}><Action label={t("detail.saveChanges")} disabled={!isValidInsight(editContent, !!detail.insight.imagePath)} onPress={() => { void saveEdit(); }} /></View>
+        <View style={screenStyles.gap12}><Action kind="ghost" label={t("common.cancel")} onPress={() => setEditing(false)} /></View>
       </> : <>
         <InsightCard insight={detail.insight} />
-        {detail.categories.length > 0 && <View style={[screenStyles.chipWrap, screenStyles.gap12]} accessibilityLabel={`Categories: ${detail.categories.map((category) => category.name).join(", ")}`}>
+        {detail.categories.length > 0 && <View style={[screenStyles.chipWrap, screenStyles.gap12]} accessibilityLabel={t("category.tags", { names: detail.categories.map((category) => category.name).join(", ") })}>
           {detail.categories.map((category) => <View key={category.id} style={[screenStyles.filter, screenStyles.categoryTag]}><Text style={screenStyles.filterText}>{category.name}</Text></View>)}
         </View>}
-        <View style={screenStyles.gap24}><Action kind="secondary" label="Edit" icon="create-outline" onPress={() => setEditing(true)} /></View>
+        <View style={screenStyles.gap24}><Action kind="secondary" label={t("detail.edit")} icon="create-outline" onPress={() => setEditing(true)} /></View>
         {detail.insight.status === "active" && (() => {
           const next = detail.events.find((event) => !event.shownAt && !event.cancelledAt);
           return <>
-            {next && <View style={screenStyles.gap24}><Body muted>Resurfaces after {formatDate(next.scheduledAt)}</Body></View>}
-            <View style={screenStyles.gap12}><Action kind="ghost" label="Snooze" icon="time-outline" onPress={snooze} /></View>
+            {next && <View style={screenStyles.gap24}><Body muted>{t("detail.nextResurface", { date: formatDate(next.scheduledAt) })}</Body></View>}
+            <View style={screenStyles.gap12}><Action kind="ghost" label={t("detail.snooze")} icon="time-outline" onPress={snooze} /></View>
           </>;
         })()}
-        <View style={screenStyles.gap12}>{detail.insight.status === "active" ? <Action kind="ghost" label="Pause resurfacing" onPress={() => { void updateStatus("paused"); }} /> : <Action kind="secondary" label={detail.insight.status === "paused" ? "Resume resurfacing" : "Restore insight"} onPress={() => { void updateStatus("active"); }} />}</View>
-        {detail.insight.status !== "archived" && <View style={screenStyles.gap12}><Action kind="ghost" label="Archive" onPress={() => { Alert.alert("Archive this insight?", "You can restore it from Library later.", [{ text: "Cancel", style: "cancel" }, { text: "Archive", onPress: () => { void updateStatus("archived"); } }]); }} /></View>}
-        <View style={screenStyles.gap12}><Action kind="danger" label="Delete permanently" onPress={confirmDelete} /></View>
-        <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Resurfacing history</Text></View>
-        {detail.events.filter((event) => !!event.shownAt).length === 0 ? <Body muted>We'll bring this back after some time has passed.</Body> : detail.events.filter((event) => !!event.shownAt).map((event) => <View key={event.id} style={screenStyles.historyRow}><View style={screenStyles.historyDot} /><View style={screenStyles.flex}><Text style={screenStyles.historyDate}>{formatDate(event.shownAt!)}</Text><Text style={screenStyles.historyMeta}>{event.response === "yes" ? "Still relevant" : event.response === "not_now" ? "Paused" : event.response === "not_anymore" ? "Archived" : "Seen"}</Text>{detail.reflections.filter((reflection) => reflection.eventId === event.id).map((reflection) => <Text key={reflection.id} style={screenStyles.reflectionText}>{reflection.content}</Text>)}</View></View>)}
+        <View style={screenStyles.gap12}>{detail.insight.status === "active" ? <Action kind="ghost" label={t("detail.pause")} onPress={() => { void updateStatus("paused"); }} /> : <Action kind="secondary" label={detail.insight.status === "paused" ? t("detail.resume") : t("detail.restore")} onPress={() => { void updateStatus("active"); }} />}</View>
+        {detail.insight.status !== "archived" && <View style={screenStyles.gap12}><Action kind="ghost" label={t("common.archive")} onPress={() => { Alert.alert(t("reflect.archiveTitle"), t("detail.archiveBody"), [{ text: t("common.cancel"), style: "cancel" }, { text: t("common.archive"), onPress: () => { void updateStatus("archived"); } }]); }} /></View>}
+        <View style={screenStyles.gap12}><Action kind="danger" label={t("detail.deletePermanently")} onPress={confirmDelete} /></View>
+        <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>{t("detail.history")}</Text></View>
+        {detail.events.filter((event) => !!event.shownAt).length === 0 ? <Body muted>{t("detail.historyEmpty")}</Body> : detail.events.filter((event) => !!event.shownAt).map((event) => <View key={event.id} style={screenStyles.historyRow}><View style={screenStyles.historyDot} /><View style={screenStyles.flex}><Text style={screenStyles.historyDate}>{formatDate(event.shownAt!)}</Text><Text style={screenStyles.historyMeta}>{t(`detail.response.${event.response ?? "seen"}` as MessageKey)}</Text>{detail.reflections.filter((reflection) => reflection.eventId === event.id).map((reflection) => <Text key={reflection.id} style={screenStyles.reflectionText}>{reflection.content}</Text>)}</View></View>)}
       </>}
     </Screen>}
 
     {route === "categories" && <Screen>
-      <Header title="Categories" back={goLibrary} />
-      <Eyebrow>Organize your insights</Eyebrow><Title>Categories</Title>
-      <Body muted>Optional labels you choose. Renaming or deleting a category never deletes an insight.</Body>
+      <Header title={t("category.screenTitle")} back={goLibrary} />
+      <Eyebrow>{t("category.eyebrow")}</Eyebrow><Title>{t("category.screenTitle")}</Title>
+      <Body muted>{t("category.intro")}</Body>
       <View style={screenStyles.gap24}><CategoryChips categories={[]} selected={[]} onToggle={() => undefined} onCreate={(name) => addCategory(name)} /></View>
       <View style={screenStyles.gap24}>
-        {categories.length === 0 ? <Body muted>No categories yet.</Body> : categories.map((category) => renamingCategory?.id === category.id
+        {categories.length === 0 ? <Body muted>{t("category.none")}</Body> : categories.map((category) => renamingCategory?.id === category.id
           ? <View key={category.id} style={screenStyles.libraryRow}>
-              <TextInput autoFocus clearButtonMode="while-editing" value={renamingCategory.name} onChangeText={(name) => setRenamingCategory({ id: category.id, name })} maxLength={MAX_CATEGORY_NAME_LENGTH} style={[screenStyles.search, screenStyles.flex]} accessibilityLabel={`New name for ${category.name}`} />
-              <Action kind="secondary" label="Save" onPress={() => {
+              <TextInput autoFocus clearButtonMode="while-editing" value={renamingCategory.name} onChangeText={(name) => setRenamingCategory({ id: category.id, name })} maxLength={MAX_CATEGORY_NAME_LENGTH} style={[screenStyles.search, screenStyles.flex]} accessibilityLabel={t("category.newNameFor", { name: category.name })} />
+              <Action kind="secondary" label={t("common.save")} onPress={() => {
                 void renameCategory(category.id, renamingCategory.name).then(() => { setRenamingCategory(null); void refreshCategories(); })
-                  .catch((error: unknown) => Alert.alert("Category not renamed", error instanceof CategoryError ? error.message : "Something went wrong. Please try again."));
+                  .catch((error: unknown) => Alert.alert(t("category.notRenamed"), categoryMessage(error)));
               }} />
-              <IconButton icon="close" label="Cancel rename" onPress={() => setRenamingCategory(null)} />
+              <IconButton icon="close" label={t("category.cancelRename")} onPress={() => setRenamingCategory(null)} />
             </View>
           : <View key={category.id} style={screenStyles.libraryRow}>
-              <View style={screenStyles.flex}><Text style={screenStyles.libraryText}>{category.name}</Text><Text style={screenStyles.libraryDate}>{category.insights} insight{category.insights === 1 ? "" : "s"}</Text></View>
-              <IconButton icon="create-outline" label={`Rename ${category.name}`} onPress={() => setRenamingCategory({ id: category.id, name: category.name })} />
-              <IconButton icon="trash-outline" label={`Delete ${category.name}`} onPress={() => {
-                Alert.alert(`Delete "${category.name}"?`, `It's on ${category.insights} insight${category.insights === 1 ? "" : "s"}. Those insights stay; only the label is removed.`, [
-                  { text: "Cancel", style: "cancel" },
-                  { text: "Delete category", style: "destructive", onPress: () => { void deleteCategory(category.id).then(refreshCategories).catch(report); } },
+              <View style={screenStyles.flex}><Text style={screenStyles.libraryText}>{category.name}</Text><Text style={screenStyles.libraryDate}>{t("category.count", { count: category.insights })}</Text></View>
+              <IconButton icon="create-outline" label={t("category.renameLabel", { name: category.name })} onPress={() => setRenamingCategory({ id: category.id, name: category.name })} />
+              <IconButton icon="trash-outline" label={t("category.deleteLabel", { name: category.name })} onPress={() => {
+                Alert.alert(t("category.deleteTitle", { name: category.name }), t("category.deleteBody", { count: category.insights }), [
+                  { text: t("common.cancel"), style: "cancel" },
+                  { text: t("category.deleteAction"), style: "destructive", onPress: () => { void deleteCategory(category.id).then(refreshCategories).catch(report); } },
                 ]);
               }} />
             </View>)}
@@ -879,26 +899,33 @@ function ResurfaceApp() {
     </Screen>}
 
     {route === "settings" && <Screen>
-      <Header title="Settings" back={() => { void goToday(); }} />
-      <Eyebrow>Make it yours</Eyebrow><Title>A gentler rhythm.</Title>
-      <Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Resurfacing frequency</Text><Body muted>Maximum number of insights Today can show in one day.</Body>
-      <View style={[screenStyles.frequency, stackChoices && screenStyles.frequencyStacked]}>{([1, 3, 5] as const).map((cap) => <Pressable key={cap} accessibilityRole="radio" accessibilityState={{ checked: settings.dailyCap === cap }} accessibilityLabel={`${cap === 1 ? "Light" : cap === 3 ? "Standard" : "More"}, up to ${cap} per day`} onPress={() => { void updateSettings({ dailyCap: cap }); }} style={[screenStyles.frequencyOption, stackChoices && screenStyles.frequencyOptionStacked, settings.dailyCap === cap && screenStyles.frequencySelected]}><Text style={screenStyles.frequencyName}>{cap === 1 ? "Light" : cap === 3 ? "Standard" : "More"}</Text><Text style={screenStyles.frequencyDetail}>Up to {cap}/day</Text></Pressable>)}</View>
-      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Notifications</Text><Body muted>One approximate notification window per day. Today still works if notifications are off.</Body></View>
-      {notificationGranted === false && <View style={screenStyles.gap12}><Action kind="secondary" label="Enable notifications" onPress={() => { void enableNotifications(); }} /></View>}
-      <Text style={screenStyles.fieldLabel}>Preferred time (24-hour HH:MM)</Text>
-      <TextInput value={settings.notificationTime} onChangeText={(value) => { setSettings({ ...settings, notificationTime: value }); }} onBlur={() => { if (/^([01]\d|2[0-3]):[0-5]\d$/.test(settings.notificationTime)) void updateSettings({ notificationTime: settings.notificationTime }); else { Alert.alert("Use HH:MM", "Enter a time such as 09:00 or 18:30."); void getSettings().then(setSettings); } }} keyboardType="numbers-and-punctuation" maxLength={5} style={screenStyles.search} accessibilityLabel="Notification time" />
-      <Surface style={screenStyles.switchRow}><View style={screenStyles.flex}><Text style={screenStyles.switchTitle}>Show insight text</Text><Text style={screenStyles.switchDescription}>Personal words may appear on your lock screen.</Text></View><Switch accessibilityLabel="Show insight text in notifications" value={settings.showInsightText} onValueChange={(value) => { void updateSettings({ showInsightText: value }); }} trackColor={{ true: palette.accentDark }} /></Surface>
-      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Privacy & data</Text><Body muted>Insights, photos, reflections, and history are encrypted and kept on this device. There is no account or cloud sync. Removing the app or losing this device loses your insights unless you keep a backup.</Body></View>
-      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Backup</Text><Body muted>Create a password-protected file you can save in Files, iCloud Drive, Google Drive or anywhere else, and restore it on this or another device.</Body></View>
-      <View style={screenStyles.gap12}><Action kind="secondary" label="Create encrypted backup" icon="lock-closed-outline" onPress={() => openBackupSheet("create")} /></View>
-      <View style={screenStyles.gap12}><Action kind="ghost" label="Restore from backup" icon="download-outline" onPress={chooseRestoreFile} /></View>
-      <View style={screenStyles.gap12}><Action kind="ghost" label="Verify a backup file" icon="shield-checkmark-outline" onPress={() => { void pickBackupFile("verify"); }} /></View>
+      <Header title={t("settings.header")} back={() => { void goToday(); }} />
+      <Eyebrow>{t("settings.eyebrow")}</Eyebrow><Title>{t("settings.title")}</Title>
+      <Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>{t("settings.frequency")}</Text><Body muted>{t("settings.frequencyBody")}</Body>
+      <View style={[screenStyles.frequency, stackChoices && screenStyles.frequencyStacked]}>{([1, 3, 5] as const).map((cap) => <Pressable key={cap} accessibilityRole="radio" accessibilityState={{ checked: settings.dailyCap === cap }} accessibilityLabel={t("settings.capLabel", { name: t(`settings.cap.${cap}` as MessageKey), cap })} onPress={() => { void updateSettings({ dailyCap: cap }); }} style={[screenStyles.frequencyOption, stackChoices && screenStyles.frequencyOptionStacked, settings.dailyCap === cap && screenStyles.frequencySelected]}><Text style={screenStyles.frequencyName}>{t(`settings.cap.${cap}` as MessageKey)}</Text><Text style={screenStyles.frequencyDetail}>{t("settings.capDetail", { cap })}</Text></Pressable>)}</View>
+      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>{t("settings.notifications")}</Text><Body muted>{t("settings.notificationsBody")}</Body></View>
+      {notificationGranted === false && <View style={screenStyles.gap12}><Action kind="secondary" label={t("settings.enableNotifications")} onPress={() => { void enableNotifications(); }} /></View>}
+      <Text style={screenStyles.fieldLabel}>{t("settings.time")}</Text>
+      <TextInput value={settings.notificationTime} onChangeText={(value) => { setSettings({ ...settings, notificationTime: value }); }} onBlur={() => { if (/^([01]\d|2[0-3]):[0-5]\d$/.test(settings.notificationTime)) void updateSettings({ notificationTime: settings.notificationTime }); else { Alert.alert(t("settings.timeInvalidTitle"), t("settings.timeInvalidBody")); void getSettings().then(setSettings); } }} keyboardType="numbers-and-punctuation" maxLength={5} style={screenStyles.search} accessibilityLabel={t("settings.timeLabel")} />
+      <Surface style={screenStyles.switchRow}><View style={screenStyles.flex}><Text style={screenStyles.switchTitle}>{t("settings.showText")}</Text><Text style={screenStyles.switchDescription}>{t("settings.showTextBody")}</Text></View><Switch accessibilityLabel={t("settings.showTextLabel")} value={settings.showInsightText} onValueChange={(value) => { void updateSettings({ showInsightText: value }); }} trackColor={{ true: palette.accentDark }} /></Surface>
+      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>{t("settings.language")}</Text><Body muted>{t("settings.languageBody")}</Body></View>
+      <View style={[screenStyles.chipWrap, screenStyles.gap12]}>{(["system", "en", "ro"] as const).map((language) => {
+        const on = settings.language === language;
+        return <Pressable key={language} accessibilityRole="radio" accessibilityState={{ checked: on }} onPress={() => { void updateSettings({ language }); }} style={[screenStyles.filter, on && screenStyles.selectedFilter]}>
+          <Text style={[screenStyles.filterText, on && screenStyles.selectedFilterText]}>{t(`settings.language.${language}` as MessageKey)}</Text>
+        </Pressable>;
+      })}</View>
+      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>{t("settings.privacy")}</Text><Body muted>{t("settings.privacyBody")}</Body></View>
+      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>{t("settings.backup")}</Text><Body muted>{t("settings.backupBody")}</Body></View>
+      <View style={screenStyles.gap12}><Action kind="secondary" label={t("settings.createBackup")} icon="lock-closed-outline" onPress={() => openBackupSheet("create")} /></View>
+      <View style={screenStyles.gap12}><Action kind="ghost" label={t("settings.restoreBackup")} icon="download-outline" onPress={chooseRestoreFile} /></View>
+      <View style={screenStyles.gap12}><Action kind="ghost" label={t("settings.verifyBackup")} icon="shield-checkmark-outline" onPress={() => { void pickBackupFile("verify"); }} /></View>
       <View style={screenStyles.gap12}>
-        <Body muted>{backupStatus?.lastCreatedAt ? `Last backup created on this device: ${formatDateTime(backupStatus.lastCreatedAt)}${backupStatus.lastCreatedComplete ? "" : " (incomplete)"}. Resurface can't confirm that the place you saved it kept the file.` : "No backup has been created on this device yet."}</Body>
-        <Body muted>{backupStatus?.lastVerified ? `Last verified from a file: ${formatDateTime(backupStatus.lastVerified.verifiedAt)} — a backup made ${formatDateTime(backupStatus.lastVerified.exportedAt)} with ${backupStatus.lastVerified.insights} insight${backupStatus.lastVerified.insights === 1 ? "" : "s"}${backupStatus.lastVerified.omissions ? ", incomplete" : ""}.` : "No backup file has been verified on this device yet."}</Body>
+        <Body muted>{backupStatus?.lastCreatedAt ? t(backupStatus.lastCreatedComplete ? "settings.lastCreated" : "settings.lastCreatedIncomplete", { date: formatDateTime(backupStatus.lastCreatedAt) }) : t("settings.noneCreated")}</Body>
+        <Body muted>{backupStatus?.lastVerified ? t(backupStatus.lastVerified.omissions ? "settings.lastVerifiedIncomplete" : "settings.lastVerified", { verified: formatDateTime(backupStatus.lastVerified.verifiedAt), made: formatDateTime(backupStatus.lastVerified.exportedAt), count: backupStatus.lastVerified.insights }) : t("settings.noneVerified")}</Body>
       </View>
-      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Beta signals on this device</Text><Body muted>{metrics ? (metrics.firstSaveAt ? `First insight saved ${formatDate(metrics.firstSaveAt)}.` : "No insight saved yet.") : ""}</Body><Body muted>{metrics?.firstSaveAt ? (metrics.coreLoopAt ? `First resurfacing seen ${formatDate(metrics.coreLoopAt)} (${((days) => `${days} ${days === 1 ? "day" : "days"}`)(Math.max(0, Math.round((Date.parse(metrics.coreLoopAt) - Date.parse(metrics.firstSaveAt)) / 86_400_000)))} after the first save).` : "No resurfacing seen yet.") : ""}</Body><Body muted>{metrics ? `${metrics.saved} saved · ${metrics.shown} shown · asked ${metrics.asked} · ${metrics.answered} answered · ${metrics.valuable} marked worthwhile` : "Loading…"}</Body><Body muted>{metrics?.shown ? `${Math.round((metrics.answered / metrics.shown) * 100)}% of shown insights received a value answer.` : "Answer rate appears after the first resurfacing."}</Body><Body muted>{metrics?.answered ? `${Math.round((metrics.valuable / metrics.answered) * 100)}% of answers said a resurfacing was worthwhile.` : "Value rate appears after you answer a feedback question."}</Body></View>
-      <View style={screenStyles.gap24}><Body muted>Resurface 0.1.0 · Device-only beta</Body></View>
+      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>{t("settings.signals")}</Text><Body muted>{metrics ? (metrics.firstSaveAt ? t("settings.firstSave", { date: formatDate(metrics.firstSaveAt) }) : t("settings.noFirstSave")) : ""}</Body><Body muted>{metrics?.firstSaveAt ? (metrics.coreLoopAt ? t("settings.coreLoop", { date: formatDate(metrics.coreLoopAt), count: Math.max(0, Math.round((Date.parse(metrics.coreLoopAt) - Date.parse(metrics.firstSaveAt)) / 86_400_000)) }) : t("settings.noCoreLoop")) : ""}</Body><Body muted>{metrics ? t("settings.counts", { saved: metrics.saved, shown: metrics.shown, asked: metrics.asked, answered: metrics.answered, valuable: metrics.valuable }) : t("common.loading")}</Body><Body muted>{metrics?.shown ? t("settings.answerRate", { percent: Math.round((metrics.answered / metrics.shown) * 100) }) : t("settings.answerRateLater")}</Body><Body muted>{metrics?.answered ? t("settings.valueRate", { percent: Math.round((metrics.valuable / metrics.answered) * 100) }) : t("settings.valueRateLater")}</Body></View>
+      <View style={screenStyles.gap24}><Body muted>{t("settings.version", { version: "0.1.0" })}</Body></View>
     </Screen>}
 
     {/* An in-screen overlay rather than a native Modal, so the share sheet is the only view
@@ -906,27 +933,27 @@ function ResurfaceApp() {
     {!!backupMode && <View style={StyleSheet.absoluteFill}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={screenStyles.modalBackdrop}>
         <Surface style={screenStyles.feedbackBox}>
-          <Eyebrow>{backupMode === "create" ? "Encrypted backup" : backupMode === "verify" ? "Verify backup" : "Restore backup"}</Eyebrow>
-          <Text maxFontSizeMultiplier={1.8} style={screenStyles.feedbackTitle}>{backupMode === "create" ? "Choose a backup password." : "Enter the backup password."}</Text>
-          <Body muted>{backupMode === "create" ? "If you forget this password, the backup can't be opened. Resurface can't reset or recover it." : backupMode === "verify" ? "Checks the password and the backup's contents. Nothing on this device changes." : "Everything currently in Resurface on this device will be replaced."}</Body>
-          <TextInput secureTextEntry autoCapitalize="none" autoCorrect={false} textContentType={backupMode === "create" ? "newPassword" : "password"} placeholder="Password" placeholderTextColor={palette.muted} value={backupPassword} onChangeText={setBackupPassword} editable={!backupBusy} style={screenStyles.search} accessibilityLabel="Backup password" />
-          {backupMode === "create" && <TextInput secureTextEntry autoCapitalize="none" autoCorrect={false} textContentType="newPassword" placeholder="Repeat password" placeholderTextColor={palette.muted} value={backupConfirm} onChangeText={setBackupConfirm} editable={!backupBusy} style={screenStyles.search} accessibilityLabel="Repeat backup password" />}
-          {backupMode === "create" && backupPassword.length > 0 && backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH && <Text style={screenStyles.backupHint}>Use at least {MIN_BACKUP_PASSWORD_LENGTH} characters.</Text>}
-          {backupMode === "create" && backupConfirm.length > 0 && backupConfirm !== backupPassword && <Text style={screenStyles.backupHint}>The passwords don't match.</Text>}
+          <Eyebrow>{t(`backup.eyebrow.${backupMode}` as MessageKey)}</Eyebrow>
+          <Text maxFontSizeMultiplier={1.8} style={screenStyles.feedbackTitle}>{backupMode === "create" ? t("backup.title.create") : t("backup.title.enter")}</Text>
+          <Body muted>{t(`backup.body.${backupMode}` as MessageKey)}</Body>
+          <TextInput secureTextEntry autoCapitalize="none" autoCorrect={false} textContentType={backupMode === "create" ? "newPassword" : "password"} placeholder={t("backup.password")} placeholderTextColor={palette.muted} value={backupPassword} onChangeText={setBackupPassword} editable={!backupBusy} style={screenStyles.search} accessibilityLabel={t("backup.passwordLabel")} />
+          {backupMode === "create" && <TextInput secureTextEntry autoCapitalize="none" autoCorrect={false} textContentType="newPassword" placeholder={t("backup.repeat")} placeholderTextColor={palette.muted} value={backupConfirm} onChangeText={setBackupConfirm} editable={!backupBusy} style={screenStyles.search} accessibilityLabel={t("backup.repeatLabel")} />}
+          {backupMode === "create" && backupPassword.length > 0 && backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH && <Text style={screenStyles.backupHint}>{t("backup.tooShort", { min: MIN_BACKUP_PASSWORD_LENGTH })}</Text>}
+          {backupMode === "create" && backupConfirm.length > 0 && backupConfirm !== backupPassword && <Text style={screenStyles.backupHint}>{t("backup.mismatch")}</Text>}
           <View style={screenStyles.gap24}>
             {backupMode === "create"
-              ? <Action label={backupBusy ? "Encrypting… about 10 seconds" : backupSharing ? "Waiting for the share sheet…" : "Create backup"} disabled={backupBusy || backupSharing || backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH || backupPassword !== backupConfirm} onPress={() => { void createBackup(); }} />
+              ? <Action label={backupBusy ? t("backup.encrypting") : backupSharing ? t("backup.waitingShare") : t("backup.create")} disabled={backupBusy || backupSharing || backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH || backupPassword !== backupConfirm} onPress={() => { void createBackup(); }} />
               : backupMode === "verify"
-                ? <Action label={backupBusy ? "Verifying… about 10 seconds" : "Verify backup"} disabled={backupBusy || backupPassword.length === 0} onPress={() => { void verify(); }} />
-                : <Action kind="danger" label={backupBusy ? "Restoring… about 10 seconds" : "Replace and restore"} disabled={backupBusy || backupPassword.length === 0} onPress={() => { void restore(); }} />}
+                ? <Action label={backupBusy ? t("backup.verifying") : t("backup.verify")} disabled={backupBusy || backupPassword.length === 0} onPress={() => { void verify(); }} />
+                : <Action kind="danger" label={backupBusy ? t("backup.restoring") : t("backup.restore")} disabled={backupBusy || backupPassword.length === 0} onPress={() => { void restore(); }} />}
           </View>
-          <View style={screenStyles.gap12}><Action kind="ghost" label="Cancel" disabled={backupBusy} onPress={closeBackupSheet} /></View>
+          <View style={screenStyles.gap12}><Action kind="ghost" label={t("common.cancel")} disabled={backupBusy} onPress={closeBackupSheet} /></View>
         </Surface>
       </KeyboardAvoidingView>
     </View>}
 
     <Modal visible={!!feedbackEventId} transparent animationType="fade" onRequestClose={() => { void finishFeedback(); }}>
-      <View style={screenStyles.modalBackdrop}><Surface style={screenStyles.feedbackBox}><Eyebrow>A quick check-in</Eyebrow><Text maxFontSizeMultiplier={1.8} style={screenStyles.feedbackTitle}>Was this worth resurfacing today?</Text><Body muted>Your answer helps us understand whether this is useful. It stays on this device.</Body><View style={screenStyles.gap24}><Action label="Yes" onPress={() => { void finishFeedback("yes"); }} /></View><View style={screenStyles.gap12}><Action kind="secondary" label="Not really" onPress={() => { void finishFeedback("not_really"); }} /></View><View style={screenStyles.gap12}><Action kind="ghost" label="Skip" onPress={() => { void finishFeedback(); }} /></View></Surface></View>
+      <View style={screenStyles.modalBackdrop}><Surface style={screenStyles.feedbackBox}><Eyebrow>{t("feedback.eyebrow")}</Eyebrow><Text maxFontSizeMultiplier={1.8} style={screenStyles.feedbackTitle}>{t("feedback.question")}</Text><Body muted>{t("feedback.body")}</Body><View style={screenStyles.gap24}><Action label={t("feedback.yes")} onPress={() => { void finishFeedback("yes"); }} /></View><View style={screenStyles.gap12}><Action kind="secondary" label={t("feedback.notReally")} onPress={() => { void finishFeedback("not_really"); }} /></View><View style={screenStyles.gap12}><Action kind="ghost" label={t("feedback.skip")} onPress={() => { void finishFeedback(); }} /></View></Surface></View>
     </Modal>
   </>;
 }

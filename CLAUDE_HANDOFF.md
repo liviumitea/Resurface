@@ -24,6 +24,7 @@ Expo SDK 57 / React Native 0.86 / TypeScript, version 0.1.0.
 - `src/storage.ts` — opens SQLCipher, owns keys, binds the store; backup file creation/restore; `StorageError` reasons; key-loss `setAsideUnreadableData()`.
 - `src/backup.ts` — v1 archive: scrypt (N=2^15, r=8, p=1) + AES-256-GCM via pinned `@noble/*` 2.4.0, header authenticated, strict validation.
 - `src/media.ts` — photo encryption, photo paths resolved by file name, launch-time cache sweep.
+- `src/i18n.ts` — English/Romanian UI strings, plural rules, locale dates; every user-visible string goes through `t()` (tests enforce matching keys/placeholders). Native permission strings live in `locales/*.json`.
 - `src/notifications.ts` — local reminder reconciliation. `src/ui.tsx`, `src/theme.ts` — components and palette.
 - `tests/` — `domain`, `storage-queries`, `lifecycle` (production store on node:sqlite, Europe/Bucharest DST clock), `backup`, `metrics`; shared `harness.ts`. 44 tests as of 24 October.
 - `scripts/prepare-ios.mjs` — works around Expo SDK 57 Xcode scripts mishandling the space in `Proiect Alexandra`.

@@ -1,0 +1,6 @@
+{
+  "ios": {
+    "NSCameraUsageDescription": "Take photos of things you want to remember.",
+    "NSPhotoLibraryUsageDescription": "Choose photos of things you want to remember."
+  }
+}

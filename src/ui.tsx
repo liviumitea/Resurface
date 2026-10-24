@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import type { ComponentProps, PropsWithChildren, ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { t } from "./i18n";
 import { palette } from "./theme";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
@@ -58,7 +59,7 @@ export function IconButton({ icon, label, onPress }: { icon: IconName; label: st
 export function Header({ title, back, right }: { title: string; back?: () => void; right?: ReactNode }) {
   return (
     <View style={styles.header}>
-      <View style={styles.headerSide}>{back && <IconButton icon="arrow-back" label="Back" onPress={back} />}</View>
+      <View style={styles.headerSide}>{back && <IconButton icon="arrow-back" label={t("common.back")} onPress={back} />}</View>
       <Text accessibilityRole="header" maxFontSizeMultiplier={1.6} style={styles.headerTitle}>{title}</Text>
       <View style={[styles.headerSide, styles.headerRight]}>{right}</View>
     </View>
@@ -71,14 +72,14 @@ export function BottomNav({ active, onToday, onCapture, onLibrary }: { active: "
       <View style={styles.nav}>
         <Pressable accessibilityRole="tab" accessibilityState={{ selected: active === "today" }} onPress={onToday} style={styles.navItem}>
           <Ionicons name={active === "today" ? "sunny" : "sunny-outline"} size={23} color={active === "today" ? palette.accentDark : palette.muted} />
-          <Text maxFontSizeMultiplier={1.4} style={[styles.navLabel, active === "today" && styles.navActive]}>Today</Text>
+          <Text maxFontSizeMultiplier={1.4} style={[styles.navLabel, active === "today" && styles.navActive]}>{t("nav.today")}</Text>
         </Pressable>
-        <Pressable accessibilityRole="button" accessibilityLabel="Save an insight" onPress={onCapture} style={styles.addButton}>
+        <Pressable accessibilityRole="button" accessibilityLabel={t("nav.capture")} onPress={onCapture} style={styles.addButton}>
           <Ionicons name="add" size={28} color={palette.paper} />
         </Pressable>
         <Pressable accessibilityRole="tab" accessibilityState={{ selected: active === "library" }} onPress={onLibrary} style={styles.navItem}>
           <Ionicons name={active === "library" ? "albums" : "albums-outline"} size={23} color={active === "library" ? palette.accentDark : palette.muted} />
-          <Text maxFontSizeMultiplier={1.4} style={[styles.navLabel, active === "library" && styles.navActive]}>Library</Text>
+          <Text maxFontSizeMultiplier={1.4} style={[styles.navLabel, active === "library" && styles.navActive]}>{t("nav.library")}</Text>
         </Pressable>
       </View>
     </SafeAreaView>

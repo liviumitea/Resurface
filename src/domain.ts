@@ -53,6 +53,8 @@ export type InsightDetail = {
   categories: Category[];
 };
 export type Settings = {
+  /** "system" follows the device language (Romanian or English); user content is never translated. */
+  language: "system" | "en" | "ro";
   dailyCap: 1 | 3 | 5;
   notificationTime: string;
   showInsightText: boolean;
@@ -101,6 +103,10 @@ export const MAX_PLANNED_NOTIFICATIONS = 30;
 export const GENERIC_NOTIFICATION = { title: "Resurface", body: "Something worth remembering is waiting for you." } as const;
 
 export type NotificationPlan = { eventId: string; insightId: string; when: Date; title: string; body: string };
+export type NotificationTexts = { genericTitle: string; genericBody: string; personalTitle: string };
+const ENGLISH_NOTIFICATION_TEXTS: NotificationTexts = {
+  genericTitle: GENERIC_NOTIFICATION.title, genericBody: GENERIC_NOTIFICATION.body, personalTitle: "Something you wanted to remember",
+};
 
 /**
  * Plans at most one local notification per local day and at most 30 in total, oldest due first.
@@ -110,6 +116,7 @@ export function planNotifications(
   candidates: { id: string; insightId: string; scheduledAt: string; content: string | null }[],
   settings: Pick<Settings, "notificationTime" | "showInsightText">,
   clock: Date,
+  texts: NotificationTexts = ENGLISH_NOTIFICATION_TEXTS,
 ): NotificationPlan[] {
   const usedDays = new Set<string>();
   const plans: NotificationPlan[] = [];
@@ -123,8 +130,8 @@ export function planNotifications(
       eventId: event.id,
       insightId: event.insightId,
       when,
-      title: settings.showInsightText ? "Something you wanted to remember" : GENERIC_NOTIFICATION.title,
-      body: personal ? event.content!.slice(0, 140) : GENERIC_NOTIFICATION.body,
+      title: settings.showInsightText ? texts.personalTitle : texts.genericTitle,
+      body: personal ? event.content!.slice(0, 140) : texts.genericBody,
     });
   }
   return plans;
@@ -137,9 +144,14 @@ export type PresentedNotification = { identifier: string; eventId: string | null
  * to a still-pending event (already seen, paused, archived, or deleted) and any showing insight
  * text after the user turned that option off.
  */
-export function staleNotificationIds(presented: PresentedNotification[], pendingEventIds: Set<string>, showInsightText: boolean): string[] {
+export function staleNotificationIds(
+  presented: PresentedNotification[],
+  pendingEventIds: Set<string>,
+  showInsightText: boolean,
+  genericBodies: ReadonlySet<string> = new Set([GENERIC_NOTIFICATION.body]),
+): string[] {
   return presented
-    .filter(({ eventId, body }) => !eventId || !pendingEventIds.has(eventId) || (!showInsightText && body !== GENERIC_NOTIFICATION.body))
+    .filter(({ eventId, body }) => !eventId || !pendingEventIds.has(eventId) || (!showInsightText && !genericBodies.has(body ?? "")))
     .map(({ identifier }) => identifier);
 }
 
