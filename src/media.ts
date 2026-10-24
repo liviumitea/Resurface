@@ -1,4 +1,4 @@
-import { AESEncryptionKey, AESSealedData, aesDecryptAsync, aesEncryptAsync } from "expo-crypto";
+import { AESEncryptionKey, AESSealedData, aesDecryptAsync, aesEncryptAsync, randomUUID } from "expo-crypto";
 import { Directory, File, Paths } from "expo-file-system";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as SecureStore from "expo-secure-store";
@@ -119,13 +119,70 @@ export function deleteEncryptedImage(encryptedPath: string | null): void {
   if (file.exists) file.delete();
 }
 
+/** Must match the app group the expo-sharing plugin gives the share extension (group.<bundle id>). */
+const SHARE_APP_GROUP = "group.app.resurface.mobile";
+const SHARED_DRAFT_DIRECTORY = "SharedPhoto";
+/** Larger shares are refused rather than decoded; a 48 MP HEIC is well under this. */
+export const MAX_SHARED_IMAGE_BYTES = 64 * 1024 * 1024;
+
+export class SharedImageError extends Error {
+  constructor(readonly reason: "unreadable" | "too_large") {
+    super(reason === "too_large" ? "The shared photo is too large." : "The shared photo could not be read.");
+  }
+}
+
+function shareContainer(): Directory | null {
+  try { return Paths.appleSharedContainers?.[SHARE_APP_GROUP] ?? null; } catch { return null; }
+}
+
+/**
+ * The iOS share extension leaves a plaintext copy of a shared photo in the app-group container,
+ * which is shared with the extension and outlives our cache sweep. The photo is copied into the
+ * app's cache (deleted on save or cancel, and swept at launch) and the container copy is removed.
+ * On Android the value is another app's content URI, which is only read.
+ */
+export async function takeSharedImage(uri: string): Promise<string> {
+  const source = new File(uri);
+  try {
+    if (!source.exists) throw new SharedImageError("unreadable");
+    if ((source.size ?? 0) > MAX_SHARED_IMAGE_BYTES) throw new SharedImageError("too_large");
+    const directory = new Directory(Paths.cache, SHARED_DRAFT_DIRECTORY);
+    directory.create({ idempotent: true, intermediates: true });
+    const extension = /^\.[a-z0-9]{1,5}$/i.test(source.extension) ? source.extension : ".img";
+    const target = new File(directory, `${randomUUID()}${extension}`);
+    try { await source.copy(target); } catch { throw new SharedImageError("unreadable"); }
+    return target.uri;
+  } catch (error) {
+    throw error instanceof SharedImageError ? error : new SharedImageError("unreadable");
+  } finally {
+    clearShareContainerFiles();
+  }
+}
+
+/**
+ * Deletes the files the share extension left in the app-group container, including copies from
+ * shares that were replaced or never opened. Only visible files at its top level are touched: the
+ * pending-share list lives in a subfolder, and iOS keeps a hidden metadata file at the top level
+ * whose removal detaches the container from the app (seen on the simulator).
+ */
+export function clearShareContainerFiles(): void {
+  const container = shareContainer();
+  if (!container) return;
+  try {
+    for (const entry of container.list()) {
+      if (!(entry instanceof File) || entry.name.startsWith(".")) continue;
+      try { entry.delete(); } catch { /* Retried on the next share. */ }
+    }
+  } catch { /* Best effort. */ }
+}
+
 /**
  * Native pickers and the image manipulator keep plaintext copies in these cache folders, and a
  * backup file waiting for the share sheet sits in the cache root. Capture drafts and pending
  * shares never survive a restart, so anything left there at launch is safe to remove.
  */
 export function clearTransientCaches(): void {
-  for (const name of ["ImagePicker", "ImageManipulator", "DocumentPicker"]) {
+  for (const name of ["ImagePicker", "ImageManipulator", "DocumentPicker", SHARED_DRAFT_DIRECTORY]) {
     try {
       const directory = new Directory(Paths.cache, name);
       if (directory.exists) directory.delete();

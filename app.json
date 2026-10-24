@@ -76,13 +76,15 @@
             "enabled": true,
             "activationRule": {
               "supportsText": true,
-              "supportsWebUrlWithMaxCount": 1
+              "supportsWebUrlWithMaxCount": 1,
+              "supportsImageWithMaxCount": 1
             }
           },
           "android": {
             "enabled": true,
             "singleShareMimeTypes": [
-              "text/plain"
+              "text/plain",
+              "image/*"
             ]
           }
         }

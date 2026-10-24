@@ -15,7 +15,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { BACKUP_LIMITS, BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH, type BackupOmissions } from "./src/backup";
 import { formatDate, formatDateTime, formatLongDay, resolveLanguage, setLanguage, t, type MessageKey } from "./src/i18n";
 import { MAX_CATEGORY_NAME_LENGTH, MAX_SOURCE_LENGTH, addCalendarDays, draftFromShared, type LibraryItem, type LibrarySort, isValidInsight, type Category, type CategoryWithCount, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
-import { clearTransientCaches, deletePickedImageFromCache, imageDataUri } from "./src/media";
+import { SharedImageError, clearShareContainerFiles, clearTransientCaches, deletePickedImageFromCache, imageDataUri, takeSharedImage } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
   countInsights, createBackupFile, createInsight, deleteCachedFile, deleteInsight, editInsight, getBetaMetrics, getDetail,
@@ -304,46 +304,66 @@ function ResurfaceApp() {
   // Content shared from another app arrives through the share extension, which opens
   // resurface://expo-sharing. It sits unencrypted in the shared app-group store until read, so it
   // is read and cleared at once and kept only as an in-memory draft; nothing is saved without Save.
+  // A shared photo is moved into the app's cache like a picked one and encrypted only on Save.
   const routeRef = useRef(route);
   routeRef.current = route;
-  const draftRef = useRef("");
-  draftRef.current = captureContent;
+  const draftRef = useRef({ content: "", imageUri: null as string | null });
+  draftRef.current = { content: captureContent, imageUri: captureImageUri };
   const readyRef = useRef(false);
   readyRef.current = ready && !fatalError && !!settings;
 
-  const openSharedContent = useCallback(() => {
-    if (!readyRef.current) return;
-    let items: { shareType: string; value: string }[];
+  const sharingRef = useRef(false);
+
+  const openSharedContent = useCallback(async () => {
+    // The link and the foreground event both fire for one share; a second pass must not sweep the
+    // container while the first is still copying the photo out of it.
+    if (!readyRef.current || sharingRef.current) return;
+    sharingRef.current = true;
+    try { await readSharedContent(); } finally { sharingRef.current = false; }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const readSharedContent = async () => {
+    let items: { shareType: string; value: string; mimeType?: string }[];
     try {
       items = Sharing.getSharedPayloads();
-      if (!items.length) return;
+      if (!items.length) { clearShareContainerFiles(); return; }
       Sharing.clearSharedPayloads();
     } catch { return; }
     const draft = draftFromShared(items);
-    if (!draft) { Alert.alert(t("share.unsupportedTitle"), t("share.unsupportedBody")); return; }
+    if (!draft) { clearShareContainerFiles(); Alert.alert(t("share.unsupportedTitle"), t("share.unsupportedBody")); return; }
+    let imageUri: string | null = null;
+    if (draft.imageUri) {
+      try { imageUri = await takeSharedImage(draft.imageUri); } catch (error) {
+        const tooLarge = error instanceof SharedImageError && error.reason === "too_large";
+        Alert.alert(t("share.photoFailedTitle"), t(tooLarge ? "share.photoTooLarge" : "share.photoUnreadable"));
+        if (!draft.content && !draft.source) return;
+      }
+    } else clearShareContainerFiles();
     const open = () => {
       beginCapture(settingsRef.current?.onboardingComplete ? "today" : "onboarding");
       setCaptureContent(draft.content);
       setCaptureSource(draft.source ?? "");
+      setCaptureImageUri(imageUri);
+      // A photo on its own goes to the photo step, which offers to read its text.
+      if (imageUri && !draft.content) setRoute("photo");
       void track("share_received").catch(() => undefined);
     };
-    if (routeRef.current === "capture" && draftRef.current.trim()) {
+    if ((routeRef.current === "capture" || routeRef.current === "photo") && (draftRef.current.content.trim() || draftRef.current.imageUri)) {
       Alert.alert(t("share.replaceTitle"), t("share.replaceBody"), [
-        { text: t("common.cancel"), style: "cancel" },
+        { text: t("common.cancel"), style: "cancel", onPress: () => deletePickedImageFromCache(imageUri) },
         { text: t("share.replaceAction"), onPress: open },
-      ]);
+      ], { cancelable: false });
     } else open();
-  // beginCapture reads only setters and the current photo, so a stable callback is fine here.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  };
 
   useEffect(() => {
-    if (ready && settings && !fatalError) openSharedContent();
+    if (ready && settings && !fatalError) void openSharedContent();
   }, [ready, !!settings, fatalError, openSharedContent]);
 
   useEffect(() => {
-    const link = Linking.addEventListener("url", ({ url }) => { if (url.includes("expo-sharing")) openSharedContent(); });
-    const foreground = AppState.addEventListener("change", (state) => { if (state === "active") openSharedContent(); });
+    const link = Linking.addEventListener("url", ({ url }) => { if (url.includes("expo-sharing")) void openSharedContent(); });
+    const foreground = AppState.addEventListener("change", (state) => { if (state === "active") void openSharedContent(); });
     return () => { link.remove(); foreground.remove(); };
   }, [openSharedContent]);
 
@@ -408,7 +428,8 @@ function ResurfaceApp() {
   }, [route, libraryStatus, librarySearch, libraryCategory, favoritesOnly, librarySort, libraryAttempt]);
 
   const beginCapture = (origin: CaptureOrigin) => {
-    deletePickedImageFromCache(captureImageUri);
+    // Through draftRef, so the stable share callback also removes the current photo, not a stale one.
+    deletePickedImageFromCache(draftRef.current.imageUri);
     setCaptureOrigin(origin);
     setCaptureContent("");
     setCaptureContext("");

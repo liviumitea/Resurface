@@ -30,12 +30,23 @@ test("feedback stays occasional", () => {
 
 test("shared text becomes the insight; a lone link becomes the source; nothing usable gives no draft", async () => {
   const { draftFromShared } = await import("../src/domain");
-  assert.deepEqual(draftFromShared([{ shareType: "text", value: "  A quote worth keeping " }]), { content: "A quote worth keeping", source: null });
-  assert.deepEqual(draftFromShared([{ shareType: "url", value: "https://example.com/essay" }]), { content: "", source: "https://example.com/essay" });
-  assert.deepEqual(draftFromShared([{ shareType: "text", value: "https://example.com/a" }]), { content: "", source: "https://example.com/a" }, "a text share that is just a link");
-  assert.deepEqual(draftFromShared([{ shareType: "text", value: "Read this" }, { shareType: "url", value: "https://example.com/b" }]), { content: "Read this", source: "https://example.com/b" });
-  assert.deepEqual(draftFromShared([{ shareType: "url", value: "https://a.example" }, { shareType: "url", value: "https://b.example" }]), { content: "https://b.example", source: "https://a.example" });
-  assert.equal(draftFromShared([{ shareType: "image", value: "file:///tmp/x.jpg" }]), null, "images are not supported yet");
+  assert.deepEqual(draftFromShared([{ shareType: "text", value: "  A quote worth keeping " }]), { content: "A quote worth keeping", source: null, imageUri: null });
+  assert.deepEqual(draftFromShared([{ shareType: "url", value: "https://example.com/essay" }]), { content: "", source: "https://example.com/essay", imageUri: null });
+  assert.deepEqual(draftFromShared([{ shareType: "text", value: "https://example.com/a" }]), { content: "", source: "https://example.com/a", imageUri: null }, "a text share that is just a link");
+  assert.deepEqual(draftFromShared([{ shareType: "text", value: "Read this" }, { shareType: "url", value: "https://example.com/b" }]), { content: "Read this", source: "https://example.com/b", imageUri: null });
+  assert.deepEqual(draftFromShared([{ shareType: "url", value: "https://a.example" }, { shareType: "url", value: "https://b.example" }]), { content: "https://b.example", source: "https://a.example", imageUri: null });
+  assert.equal(draftFromShared([{ shareType: "video", value: "file:///tmp/x.mov" }]), null, "videos are not supported");
+  assert.equal(draftFromShared([{ shareType: "file", value: "file:///tmp/x.pdf", mimeType: "application/pdf" }]), null, "nor other files");
   assert.equal(draftFromShared([{ shareType: "text", value: "   " }]), null);
   assert.equal(draftFromShared([{ shareType: "url", value: `https://example.com/${"x".repeat(300)}` }])!.source!.length, 200);
+});
+
+test("a shared photo is attached to the draft; only the first one is kept", async () => {
+  const { draftFromShared } = await import("../src/domain");
+  assert.deepEqual(draftFromShared([{ shareType: "image", value: "file:///group/a.jpg" }]), { content: "", source: null, imageUri: "file:///group/a.jpg" });
+  assert.deepEqual(draftFromShared([{ shareType: "file", value: "content://media/1", mimeType: "IMAGE/PNG" }])!.imageUri, "content://media/1", "a file that is an image");
+  assert.deepEqual(
+    draftFromShared([{ shareType: "image", value: "file:///group/a.jpg" }, { shareType: "image", value: "file:///group/b.jpg" }, { shareType: "text", value: "Caption" }]),
+    { content: "Caption", source: null, imageUri: "file:///group/a.jpg" },
+  );
 });

@@ -164,28 +164,34 @@ export function staleNotificationIds(
     .map(({ identifier }) => identifier);
 }
 
-export type SharedItem = { shareType: string; value: string };
-export type SharedDraft = { content: string; source: string | null };
+export type SharedItem = { shareType: string; value: string; mimeType?: string };
+export type SharedDraft = { content: string; source: string | null; imageUri: string | null };
 
 const SINGLE_URL = /^https?:\/\/\S+$/i;
 
+const isSharedImage = (item: SharedItem) =>
+  item.shareType === "image" || (item.shareType === "file" && (item.mimeType ?? "").toLowerCase().startsWith("image/"));
+
 /**
- * Turns content shared from another app into an editable capture draft (text and links only for
- * now). A lone link becomes the source so the user writes the insight in their own words; other
- * text becomes the insight text. Returns null when nothing usable was shared.
+ * Turns content shared from another app into an editable capture draft. A lone link becomes the
+ * source so the user writes the insight in their own words; other text becomes the insight text;
+ * the first photo is attached (one per insight). Videos and other files are ignored. Returns null
+ * when nothing usable was shared.
  */
 export function draftFromShared(items: SharedItem[]): SharedDraft | null {
   const texts: string[] = [];
   let source: string | null = null;
+  let imageUri: string | null = null;
   for (const item of items) {
     const value = item.value?.trim() ?? "";
     if (!value) continue;
+    if (isSharedImage(item)) { imageUri ??= value; continue; }
     if (item.shareType === "url" || (item.shareType === "text" && SINGLE_URL.test(value))) {
       if (!source) source = value.slice(0, MAX_SOURCE_LENGTH); else texts.push(value);
     } else if (item.shareType === "text") texts.push(value);
   }
-  if (!texts.length && !source) return null;
-  return { content: texts.join("\n\n"), source };
+  if (!texts.length && !source && !imageUri) return null;
+  return { content: texts.join("\n\n"), source, imageUri };
 }
 
 export function shouldAskValueFeedback(shownCount: number): boolean {
