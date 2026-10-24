@@ -66,6 +66,8 @@ export type Settings = {
   language: "system" | "en" | "ro";
   dailyCap: 1 | 3 | 5;
   notificationTime: string;
+  /** Weekdays (0 = Sunday … 6 = Saturday) with no reminders. Opt-in; empty by default. */
+  quietDays: number[];
   showInsightText: boolean;
   onboardingStep: number;
   onboardingComplete: boolean;
@@ -97,14 +99,38 @@ export function isValidInsight(content: string | null, hasImage: boolean): boole
   return Boolean(content?.trim()) || hasImage;
 }
 
-export function nextNotificationDate(dueAt: string, clock: Date, time: string): Date {
-  const [hour = 9, minute = 0] = time.split(":").map(Number);
+/**
+ * Valid quiet weekdays, sorted and without duplicates. All seven would mean no reminders at all,
+ * which is what turning notifications off is for, so that is treated as none.
+ */
+export function normalizeQuietDays(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const days = [...new Set(value.filter((day): day is number => Number.isInteger(day) && day >= 0 && day <= 6))].sort();
+  return days.length >= 7 ? [] : days;
+}
+
+export function nextNotificationDate(dueAt: string, clock: Date, time: string, quietDays: readonly number[] = []): Date {
   const due = new Date(dueAt);
-  const date = new Date(Math.max(due.getTime(), clock.getTime()));
+  const date = atTime(new Date(Math.max(due.getTime(), clock.getTime())), time);
+  if (date.getTime() <= clock.getTime() + 30_000 || date.getTime() < due.getTime()) nextDayAt(date, time);
+  return skipQuietDays(date, time, normalizeQuietDays(quietDays));
+}
+
+/** Sets the local time of day. A time skipped by a daylight-saving change lands an hour later. */
+function atTime(date: Date, time: string): Date {
+  const [hour = 9, minute = 0] = time.split(":").map(Number);
   date.setHours(hour, minute, 0, 0);
-  if (date.getTime() <= clock.getTime() + 30_000 || date.getTime() < due.getTime()) {
-    date.setDate(date.getDate() + 1);
-  }
+  return date;
+}
+
+/** The next calendar day at the chosen time, re-applied so a daylight-saving shift never carries over. */
+function nextDayAt(date: Date, time: string): Date {
+  date.setDate(date.getDate() + 1);
+  return atTime(date, time);
+}
+
+function skipQuietDays(date: Date, time: string, quietDays: readonly number[]): Date {
+  for (let step = 0; step < 7 && quietDays.includes(date.getDay()); step++) nextDayAt(date, time);
   return date;
 }
 
@@ -123,7 +149,7 @@ const ENGLISH_NOTIFICATION_TEXTS: NotificationTexts = {
  */
 export function planNotifications(
   candidates: { id: string; insightId: string; scheduledAt: string; content: string | null }[],
-  settings: Pick<Settings, "notificationTime" | "showInsightText">,
+  settings: Pick<Settings, "notificationTime" | "showInsightText"> & Partial<Pick<Settings, "quietDays">>,
   clock: Date,
   texts: NotificationTexts = ENGLISH_NOTIFICATION_TEXTS,
 ): NotificationPlan[] {
@@ -131,8 +157,9 @@ export function planNotifications(
   const plans: NotificationPlan[] = [];
   for (const event of candidates) {
     if (plans.length >= MAX_PLANNED_NOTIFICATIONS) break;
-    const when = nextNotificationDate(event.scheduledAt, clock, settings.notificationTime);
-    while (usedDays.has(localDay(when))) when.setDate(when.getDate() + 1);
+    const quietDays = normalizeQuietDays(settings.quietDays);
+    const when = nextNotificationDate(event.scheduledAt, clock, settings.notificationTime, quietDays);
+    while (usedDays.has(localDay(when))) skipQuietDays(nextDayAt(when, settings.notificationTime), settings.notificationTime, quietDays);
     usedDays.add(localDay(when));
     const personal = settings.showInsightText && event.content;
     plans.push({

@@ -271,6 +271,12 @@ const en = {
   "settings.notificationsOffBody": "You can enable Resurface notifications in your device settings.",
   "settings.time": "Preferred time (24-hour HH:MM)",
   "settings.timeLabel": "Notification time",
+  "settings.timePresets": "Common times",
+  "settings.quietDays": "Quiet days (optional)",
+  "settings.quietDaysBody": "No reminders on the days you pick. Insights that come due wait in Today. Times are approximate; your phone decides exactly when to deliver.",
+  "settings.quietDayLabel": "{day}, no reminders",
+  "settings.quietAllTitle": "Keep one day",
+  "settings.quietAllBody": "To stop reminders on every day, turn off Resurface notifications in your device settings.",
   "settings.timeInvalidTitle": "Use HH:MM",
   "settings.timeInvalidBody": "Enter a time such as 09:00 or 18:30.",
   "settings.showText": "Show insight text",
@@ -642,6 +648,12 @@ const ro: Record<MessageKey, Message> = {
   "settings.notificationsOffBody": "Poți activa notificările Resurface din setările dispozitivului.",
   "settings.time": "Ora preferată (format 24 de ore, HH:MM)",
   "settings.timeLabel": "Ora notificării",
+  "settings.timePresets": "Ore obișnuite",
+  "settings.quietDays": "Zile fără mementouri (opțional)",
+  "settings.quietDaysBody": "Nu primești mementouri în zilele alese. Ideile care devin scadente te așteaptă în Azi. Orele sunt aproximative; telefonul decide exact când le livrează.",
+  "settings.quietDayLabel": "{day}, fără mementouri",
+  "settings.quietAllTitle": "Păstrează o zi",
+  "settings.quietAllBody": "Ca să oprești mementourile în toate zilele, dezactivează notificările Resurface din setările dispozitivului.",
   "settings.timeInvalidTitle": "Folosește HH:MM",
   "settings.timeInvalidBody": "Introdu o oră precum 09:00 sau 18:30.",
   "settings.showText": "Arată textul ideii",
@@ -822,6 +834,11 @@ export function formatDate(value: string | Date, language: Language = current): 
 
 export function formatDateTime(value: string | Date, language: Language = current): string {
   return new Date(value).toLocaleString(dateLocale(language), { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+/** Weekday name for 0 = Sunday … 6 = Saturday (4 January 2026 was a Sunday). */
+export function weekdayName(day: number, style: "short" | "long" = "short", language: Language = current): string {
+  return new Date(2026, 0, 4 + day).toLocaleDateString(dateLocale(language), { weekday: style });
 }
 
 export function formatLongDay(value: string | Date, language: Language = current): string {

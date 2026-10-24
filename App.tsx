@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { BACKUP_LIMITS, BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH, type BackupOmissions } from "./src/backup";
-import { formatDate, formatDateTime, formatLongDay, resolveLanguage, setLanguage, t, type MessageKey } from "./src/i18n";
+import { formatDate, formatDateTime, formatLongDay, resolveLanguage, setLanguage, t, weekdayName, type MessageKey } from "./src/i18n";
 import { MAX_CATEGORY_NAME_LENGTH, MAX_SOURCE_LENGTH, addCalendarDays, draftFromShared, type LibraryItem, type LibrarySort, isValidInsight, type Category, type CategoryWithCount, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
 import { SharedImageError, clearShareContainerFiles, clearTransientCaches, deletePickedImageFromCache, imageDataUri, isTextRecognitionSupported, recognizeText, takeSharedImage, type PhotoSaveStage } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
@@ -1062,6 +1062,25 @@ function ResurfaceApp() {
       {notificationGranted === false && <View style={screenStyles.gap12}><Action kind="secondary" label={t("settings.enableNotifications")} onPress={() => { void enableNotifications(); }} /></View>}
       <Text style={screenStyles.fieldLabel}>{t("settings.time")}</Text>
       <TextInput value={settings.notificationTime} onChangeText={(value) => { setSettings({ ...settings, notificationTime: value }); }} onBlur={() => { if (/^([01]\d|2[0-3]):[0-5]\d$/.test(settings.notificationTime)) void updateSettings({ notificationTime: settings.notificationTime }); else { Alert.alert(t("settings.timeInvalidTitle"), t("settings.timeInvalidBody")); void getSettings().then(setSettings); } }} keyboardType="numbers-and-punctuation" maxLength={5} style={screenStyles.search} accessibilityLabel={t("settings.timeLabel")} />
+      <View style={[screenStyles.chipWrap, screenStyles.gap12]} accessibilityLabel={t("settings.timePresets")}>{TIME_PRESETS.map((time) => {
+        const on = settings.notificationTime === time;
+        return <Pressable key={time} accessibilityRole="radio" accessibilityState={{ checked: on }} accessibilityLabel={`${t("settings.timeLabel")} ${time}`} onPress={() => { void updateSettings({ notificationTime: time }); }} style={[screenStyles.filter, on && screenStyles.selectedFilter]}>
+          <Text style={[screenStyles.filterText, on && screenStyles.selectedFilterText]}>{time}</Text>
+        </Pressable>;
+      })}</View>
+      <Text style={screenStyles.fieldLabel}>{t("settings.quietDays")}</Text>
+      <Body muted>{t("settings.quietDaysBody")}</Body>
+      <View style={[screenStyles.chipWrap, screenStyles.gap12]}>{WEEK_FROM_MONDAY.map((day) => {
+        const quiet = settings.quietDays.includes(day);
+        const toggle = () => {
+          const next = quiet ? settings.quietDays.filter((other) => other !== day) : [...settings.quietDays, day];
+          if (next.length >= 7) { Alert.alert(t("settings.quietAllTitle"), t("settings.quietAllBody")); return; }
+          void updateSettings({ quietDays: next });
+        };
+        return <Pressable key={day} accessibilityRole="checkbox" accessibilityState={{ checked: quiet }} accessibilityLabel={t("settings.quietDayLabel", { day: weekdayName(day, "long") })} onPress={toggle} style={[screenStyles.filter, quiet && screenStyles.selectedFilter]}>
+          <Text style={[screenStyles.filterText, quiet && screenStyles.selectedFilterText]}>{weekdayName(day)}</Text>
+        </Pressable>;
+      })}</View>
       <Surface style={screenStyles.switchRow}><View style={screenStyles.flex}><Text style={screenStyles.switchTitle}>{t("settings.showText")}</Text><Text style={screenStyles.switchDescription}>{t("settings.showTextBody")}</Text></View><Switch accessibilityLabel={t("settings.showTextLabel")} value={settings.showInsightText} onValueChange={(value) => { void updateSettings({ showInsightText: value }); }} trackColor={{ true: palette.accentDark }} /></Surface>
       <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>{t("settings.language")}</Text><Body muted>{t("settings.languageBody")}</Body></View>
       <View style={[screenStyles.chipWrap, screenStyles.gap12]}>{(["system", "en", "ro"] as const).map((language) => {
@@ -1130,6 +1149,10 @@ function PrivacyCover() {
 export default function App() {
   return <SafeAreaProvider><ResurfaceApp /><PrivacyCover /></SafeAreaProvider>;
 }
+
+const TIME_PRESETS = ["07:00", "09:00", "12:00", "18:00", "21:00"] as const;
+/** Monday first, as calendars are laid out in Romania and most of Europe. */
+const WEEK_FROM_MONDAY = [1, 2, 3, 4, 5, 6, 0] as const;
 
 const screenStyles = StyleSheet.create({
   flex: { flex: 1 }, row: { flexDirection: "row", gap: 10 }, gap12: { marginTop: 12 }, gap24: { marginTop: 24 },

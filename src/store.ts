@@ -17,6 +17,7 @@ import {
   type ResurfaceResponse,
   type Settings,
   type TodayItem,
+  normalizeQuietDays,
 } from "./domain";
 import type { BackupContents, BackupSummary } from "./backup";
 import {
@@ -81,6 +82,7 @@ export const DEFAULT_SETTINGS: Settings = {
   language: "system",
   dailyCap: 3,
   notificationTime: "09:00",
+  quietDays: [],
   showInsightText: false,
   onboardingStep: 0,
   onboardingComplete: false,
@@ -104,6 +106,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
         (result as unknown as Record<string, unknown>)[row.key] = JSON.parse(row.value);
       }
     }
+    result.quietDays = normalizeQuietDays(result.quietDays);
     return result;
   }
 
