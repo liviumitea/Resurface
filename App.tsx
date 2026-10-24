@@ -19,7 +19,8 @@ import { notificationEventId, reconcileNotifications, requestNotificationPermiss
 import {
   countInsights, createBackupFile, createInsight, deleteCachedFile, deleteInsight, editInsight, getBetaMetrics, getDetail,
   getEvent, getInsight, getSettings, getShownCount, listInsights, markCompleted, markValueFeedbackAsked, markOpened, markShown,
-  openStorage, respondToEvent, restoreBackup, setAsideUnreadableData, snoozeInsight, StorageError, type BetaMetrics, type StorageFailure, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
+  openStorage, respondToEvent, restoreBackup, setAsideUnreadableData, snoozeInsight, StorageError, verifyBackup,
+  getBackupStatus, type BackupStatus, type BetaMetrics, type StorageFailure, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
 } from "./src/storage";
 import { palette } from "./src/theme";
 import { Action, Body, BottomNav, Eyebrow, Header, IconButton, Screen, Surface, Title } from "./src/ui";
@@ -30,6 +31,10 @@ type TodayStatus = "loading" | "ready" | "error";
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function InsightImage({ path, height = 260 }: { path: string | null; height?: number }) {
@@ -121,7 +126,8 @@ function ResurfaceApp() {
   const [pendingNextIndex, setPendingNextIndex] = useState(0);
   const [metrics, setMetrics] = useState<BetaMetrics | null>(null);
   const [notificationGranted, setNotificationGranted] = useState<boolean | null>(null);
-  const [backupMode, setBackupMode] = useState<"create" | "restore" | null>(null);
+  const [backupMode, setBackupMode] = useState<"create" | "restore" | "verify" | null>(null);
+  const [backupStatus, setBackupStatus] = useState<BackupStatus | null>(null);
   const [backupPassword, setBackupPassword] = useState("");
   const [backupConfirm, setBackupConfirm] = useState("");
   // Side-by-side cards break words at large accessibility text sizes, so they stack instead.
@@ -470,7 +476,7 @@ function ResurfaceApp() {
     } catch (error) { report(error); }
   };
 
-  const openBackupSheet = (mode: "create" | "restore") => {
+  const openBackupSheet = (mode: "create" | "restore" | "verify") => {
     setBackupPassword("");
     setBackupConfirm("");
     setBackupMode(mode);
@@ -522,6 +528,7 @@ function ResurfaceApp() {
     finally { setBackupBusy(false); }
     setBackupPassword("");
     setBackupConfirm("");
+    refreshBackupStatus();
     setBackupSharing(true);
     await shareBackup(result);
     if (session !== backupSession.current) return;
@@ -535,27 +542,47 @@ function ResurfaceApp() {
     return () => subscription.remove();
   });
 
+  // Reads a chosen backup into memory for restore or verification; the picker's cache copy is
+  // deleted at once, and oversized files are refused before reading.
+  const pickBackupFile = async (mode: "restore" | "verify") => {
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({ type: "*/*", copyToCacheDirectory: true, multiple: false });
+      const asset = picked.canceled ? null : picked.assets[0];
+      if (!asset) return;
+      if (asset.size !== undefined && asset.size > BACKUP_LIMITS.maxArchiveChars) {
+        deleteCachedFile(asset.uri);
+        Alert.alert("Backup too large", "This file is too large to open on this device. Nothing on this device was changed.");
+        return;
+      }
+      try { setRestoreText(await new File(asset.uri).text()); }
+      finally { deleteCachedFile(asset.uri); }
+      openBackupSheet(mode);
+    } catch { Alert.alert("Backup not opened", "That file couldn't be read. Nothing on this device was changed."); }
+  };
+
   const chooseRestoreFile = () => {
     Alert.alert("Replace everything on this device?", "Restoring a backup replaces all insights, photos, reflections and history currently in Resurface. This can't be undone.", [
       { text: "Cancel", style: "cancel" },
-      { text: "Choose backup", style: "destructive", onPress: () => {
-        void (async () => {
-          try {
-            const picked = await DocumentPicker.getDocumentAsync({ type: "*/*", copyToCacheDirectory: true, multiple: false });
-            const asset = picked.canceled ? null : picked.assets[0];
-            if (!asset) return;
-            if (asset.size !== undefined && asset.size > BACKUP_LIMITS.maxArchiveChars) {
-              deleteCachedFile(asset.uri);
-              Alert.alert("Backup too large", "This file is too large to restore on this device. Nothing on this device was changed.");
-              return;
-            }
-            try { setRestoreText(await new File(asset.uri).text()); }
-            finally { deleteCachedFile(asset.uri); }
-            openBackupSheet("restore");
-          } catch { Alert.alert("Backup not opened", "That file couldn't be read. Nothing on this device was changed."); }
-        })();
-      } },
+      { text: "Choose backup", style: "destructive", onPress: () => { void pickBackupFile("restore"); } },
     ]);
+  };
+
+  const refreshBackupStatus = () => { void getBackupStatus().then(setBackupStatus).catch(() => setBackupStatus(null)); };
+
+  const verify = async () => {
+    if (!restoreText) return;
+    setBackupBusy(true);
+    try {
+      const summary = await verifyBackup(restoreText, backupPassword);
+      setBackupMode(null);
+      setBackupPassword("");
+      setRestoreText(null);
+      refreshBackupStatus();
+      const counts = `${summary.insights} insight${summary.insights === 1 ? "" : "s"}, ${summary.photos} photo${summary.photos === 1 ? "" : "s"}, ${summary.events} history entr${summary.events === 1 ? "y" : "ies"}, ${summary.reflections} reflection${summary.reflections === 1 ? "" : "s"}`;
+      Alert.alert(summary.omissions ? "Backup verified — incomplete" : "Backup verified",
+        `Made ${formatDateTime(summary.exportedAt)} · format v${summary.version} · ${counts}.${summary.omissions ? ` ${describeOmissions(summary.omissions, "then")}` : ""} Nothing on this device was changed.`);
+    } catch (error) { Alert.alert("Backup not verified", backupMessage(error)); }
+    finally { setBackupBusy(false); }
   };
 
   const restore = async () => {
@@ -568,6 +595,7 @@ function ResurfaceApp() {
       setRestoreText(null);
       const next = await getSettings();
       setSettings(next);
+      refreshBackupStatus();
       try { await reconcileNotifications(next); } catch (error) { report(error); }
       Alert.alert(result.omissions ? "Incomplete backup restored" : "Backup restored", `${result.insights} insight${result.insights === 1 ? "" : "s"} restored.${result.omissions ? ` In this backup, ${describeOmissions(result.omissions, "then")}` : ""}`);
       await goToday();
@@ -660,7 +688,7 @@ function ResurfaceApp() {
     </Screen>}
 
     {route === "today" && <Screen scroll={false}>
-      <Header title="resurface." right={<IconButton icon="settings-outline" label="Settings" onPress={() => { void getBetaMetrics().then(setMetrics).catch(report); void Notifications.getPermissionsAsync().then((permission) => setNotificationGranted(permission.granted)).catch(report); setRoute("settings"); }} />} />
+      <Header title="resurface." right={<IconButton icon="settings-outline" label="Settings" onPress={() => { void getBetaMetrics().then(setMetrics).catch(report); refreshBackupStatus(); void Notifications.getPermissionsAsync().then((permission) => setNotificationGranted(permission.granted)).catch(report); setRoute("settings"); }} />} />
       <ScrollView contentContainerStyle={screenStyles.todayContent}>
         <Eyebrow>{new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</Eyebrow>
         <Title>Today</Title>
@@ -758,7 +786,12 @@ function ResurfaceApp() {
       <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Backup</Text><Body muted>Create a password-protected file you can save in Files, iCloud Drive, Google Drive or anywhere else, and restore it on this or another device.</Body></View>
       <View style={screenStyles.gap12}><Action kind="secondary" label="Create encrypted backup" icon="lock-closed-outline" onPress={() => openBackupSheet("create")} /></View>
       <View style={screenStyles.gap12}><Action kind="ghost" label="Restore from backup" icon="download-outline" onPress={chooseRestoreFile} /></View>
-      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Beta signals on this device</Text><Body muted>{metrics ? (metrics.firstSaveAt ? `First insight saved ${formatDate(metrics.firstSaveAt)}.` : "No insight saved yet.") : ""}</Body><Body muted>{metrics?.firstSaveAt ? (metrics.coreLoopAt ? `First resurfacing seen ${formatDate(metrics.coreLoopAt)} (${Math.max(0, Math.round((Date.parse(metrics.coreLoopAt) - Date.parse(metrics.firstSaveAt)) / 86_400_000))} days after the first save).` : "No resurfacing seen yet.") : ""}</Body><Body muted>{metrics ? `${metrics.saved} saved · ${metrics.shown} shown · asked ${metrics.asked} · ${metrics.answered} answered · ${metrics.valuable} marked worthwhile` : "Loading…"}</Body><Body muted>{metrics?.shown ? `${Math.round((metrics.answered / metrics.shown) * 100)}% of shown insights received a value answer.` : "Answer rate appears after the first resurfacing."}</Body><Body muted>{metrics?.answered ? `${Math.round((metrics.valuable / metrics.answered) * 100)}% of answers said a resurfacing was worthwhile.` : "Value rate appears after you answer a feedback question."}</Body></View>
+      <View style={screenStyles.gap12}><Action kind="ghost" label="Verify a backup file" icon="shield-checkmark-outline" onPress={() => { void pickBackupFile("verify"); }} /></View>
+      <View style={screenStyles.gap12}>
+        <Body muted>{backupStatus?.lastCreatedAt ? `Last backup created on this device: ${formatDateTime(backupStatus.lastCreatedAt)}${backupStatus.lastCreatedComplete ? "" : " (incomplete)"}. Resurface can't confirm that the place you saved it kept the file.` : "No backup has been created on this device yet."}</Body>
+        <Body muted>{backupStatus?.lastVerified ? `Last verified from a file: ${formatDateTime(backupStatus.lastVerified.verifiedAt)} — a backup made ${formatDateTime(backupStatus.lastVerified.exportedAt)} with ${backupStatus.lastVerified.insights} insight${backupStatus.lastVerified.insights === 1 ? "" : "s"}${backupStatus.lastVerified.omissions ? ", incomplete" : ""}.` : "No backup file has been verified on this device yet."}</Body>
+      </View>
+      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>Beta signals on this device</Text><Body muted>{metrics ? (metrics.firstSaveAt ? `First insight saved ${formatDate(metrics.firstSaveAt)}.` : "No insight saved yet.") : ""}</Body><Body muted>{metrics?.firstSaveAt ? (metrics.coreLoopAt ? `First resurfacing seen ${formatDate(metrics.coreLoopAt)} (${((days) => `${days} ${days === 1 ? "day" : "days"}`)(Math.max(0, Math.round((Date.parse(metrics.coreLoopAt) - Date.parse(metrics.firstSaveAt)) / 86_400_000)))} after the first save).` : "No resurfacing seen yet.") : ""}</Body><Body muted>{metrics ? `${metrics.saved} saved · ${metrics.shown} shown · asked ${metrics.asked} · ${metrics.answered} answered · ${metrics.valuable} marked worthwhile` : "Loading…"}</Body><Body muted>{metrics?.shown ? `${Math.round((metrics.answered / metrics.shown) * 100)}% of shown insights received a value answer.` : "Answer rate appears after the first resurfacing."}</Body><Body muted>{metrics?.answered ? `${Math.round((metrics.valuable / metrics.answered) * 100)}% of answers said a resurfacing was worthwhile.` : "Value rate appears after you answer a feedback question."}</Body></View>
       <View style={screenStyles.gap24}><Body muted>Resurface 0.1.0 · Device-only beta</Body></View>
     </Screen>}
 
@@ -767,9 +800,9 @@ function ResurfaceApp() {
     {!!backupMode && <View style={StyleSheet.absoluteFill}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={screenStyles.modalBackdrop}>
         <Surface style={screenStyles.feedbackBox}>
-          <Eyebrow>{backupMode === "create" ? "Encrypted backup" : "Restore backup"}</Eyebrow>
+          <Eyebrow>{backupMode === "create" ? "Encrypted backup" : backupMode === "verify" ? "Verify backup" : "Restore backup"}</Eyebrow>
           <Text maxFontSizeMultiplier={1.8} style={screenStyles.feedbackTitle}>{backupMode === "create" ? "Choose a backup password." : "Enter the backup password."}</Text>
-          <Body muted>{backupMode === "create" ? "If you forget this password, the backup can't be opened. Resurface can't reset or recover it." : "Everything currently in Resurface on this device will be replaced."}</Body>
+          <Body muted>{backupMode === "create" ? "If you forget this password, the backup can't be opened. Resurface can't reset or recover it." : backupMode === "verify" ? "Checks the password and the backup's contents. Nothing on this device changes." : "Everything currently in Resurface on this device will be replaced."}</Body>
           <TextInput secureTextEntry autoCapitalize="none" autoCorrect={false} textContentType={backupMode === "create" ? "newPassword" : "password"} placeholder="Password" placeholderTextColor={palette.muted} value={backupPassword} onChangeText={setBackupPassword} editable={!backupBusy} style={screenStyles.search} accessibilityLabel="Backup password" />
           {backupMode === "create" && <TextInput secureTextEntry autoCapitalize="none" autoCorrect={false} textContentType="newPassword" placeholder="Repeat password" placeholderTextColor={palette.muted} value={backupConfirm} onChangeText={setBackupConfirm} editable={!backupBusy} style={screenStyles.search} accessibilityLabel="Repeat backup password" />}
           {backupMode === "create" && backupPassword.length > 0 && backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH && <Text style={screenStyles.backupHint}>Use at least {MIN_BACKUP_PASSWORD_LENGTH} characters.</Text>}
@@ -777,7 +810,9 @@ function ResurfaceApp() {
           <View style={screenStyles.gap24}>
             {backupMode === "create"
               ? <Action label={backupBusy ? "Encrypting… about 10 seconds" : backupSharing ? "Waiting for the share sheet…" : "Create backup"} disabled={backupBusy || backupSharing || backupPassword.length < MIN_BACKUP_PASSWORD_LENGTH || backupPassword !== backupConfirm} onPress={() => { void createBackup(); }} />
-              : <Action kind="danger" label={backupBusy ? "Restoring… about 10 seconds" : "Replace and restore"} disabled={backupBusy || backupPassword.length === 0} onPress={() => { void restore(); }} />}
+              : backupMode === "verify"
+                ? <Action label={backupBusy ? "Verifying… about 10 seconds" : "Verify backup"} disabled={backupBusy || backupPassword.length === 0} onPress={() => { void verify(); }} />
+                : <Action kind="danger" label={backupBusy ? "Restoring… about 10 seconds" : "Replace and restore"} disabled={backupBusy || backupPassword.length === 0} onPress={() => { void restore(); }} />}
           </View>
           <View style={screenStyles.gap12}><Action kind="ghost" label="Cancel" disabled={backupBusy} onPress={closeBackupSheet} /></View>
         </Surface>

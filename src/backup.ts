@@ -63,6 +63,29 @@ export class BackupError extends Error {
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
+/** Content-free description of an archive, safe to show and to keep after verification. */
+export type BackupSummary = {
+  exportedAt: string;
+  version: number;
+  insights: number;
+  photos: number;
+  events: number;
+  reflections: number;
+  omissions: BackupOmissions | null;
+};
+
+export function summarizeBackup(contents: BackupContents): BackupSummary {
+  return {
+    exportedAt: contents.exportedAt,
+    version: BACKUP_VERSION,
+    insights: contents.insights.length,
+    photos: Object.keys(contents.photos).length,
+    events: contents.events.length,
+    reflections: contents.reflections.length,
+    omissions: contents.omissions ?? null,
+  };
+}
+
 /** Itemizes omissions, either before exporting ("now") or when describing a restored backup ("then"). */
 export function describeOmissions({ missingPhotos, insightsWithoutPhoto, insightsLeftOut }: BackupOmissions, when: "now" | "then" = "now"): string {
   const now = when === "now";

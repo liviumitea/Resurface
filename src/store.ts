@@ -10,7 +10,7 @@ import {
   type Settings,
   type TodayItem,
 } from "./domain";
-import type { BackupContents } from "./backup";
+import type { BackupContents, BackupSummary } from "./backup";
 import {
   SELECT_NOTIFICATION_CANDIDATES_SQL, SELECT_TODAY_DUE_SQL, SELECT_TODAY_EXISTING_SQL,
 } from "./storage-queries";
@@ -42,6 +42,19 @@ export type BetaMetrics = {
   answered: number;
   valuable: number;
 };
+
+/**
+ * What this device knows about backups. "Created" only means an archive was made and offered to
+ * the share sheet; the app cannot see whether the destination kept it. "Verified" means a chosen
+ * file opened with its password; only its content-free summary is kept.
+ */
+export type BackupStatus = {
+  lastCreatedAt: string | null;
+  lastCreatedComplete: boolean | null;
+  lastVerified: (BackupSummary & { verifiedAt: string }) | null;
+};
+
+const LAST_VERIFIED_KEY = "backup.lastVerified";
 
 export const DEFAULT_SETTINGS: Settings = {
   dailyCap: 3,
@@ -360,8 +373,28 @@ export function createStore({ db, id, now }: StoreDependencies) {
     });
   }
 
+  async function recordBackupVerified(summary: BackupSummary): Promise<void> {
+    const value = JSON.stringify({ ...summary, verifiedAt: now().toISOString() });
+    await db().runAsync("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", LAST_VERIFIED_KEY, value);
+    await track("backup_verified");
+  }
+
+  async function getBackupStatus(): Promise<BackupStatus> {
+    const created = await db().getFirstAsync<{ name: string; createdAt: string }>(
+      "SELECT name, createdAt FROM analytics WHERE name IN ('backup_created', 'backup_created_incomplete') ORDER BY createdAt DESC LIMIT 1",
+    );
+    const verified = await db().getFirstAsync<{ value: string }>("SELECT value FROM settings WHERE key = ?", LAST_VERIFIED_KEY);
+    let lastVerified: BackupStatus["lastVerified"] = null;
+    try { lastVerified = verified ? JSON.parse(verified.value) : null; } catch { lastVerified = null; }
+    return {
+      lastCreatedAt: created?.createdAt ?? null,
+      lastCreatedComplete: created ? created.name === "backup_created" : null,
+      lastVerified,
+    };
+  }
+
   return {
-    exportRows, replaceAllRows,
+    exportRows, replaceAllRows, recordBackupVerified, getBackupStatus,
     track, getSettings, saveSettings, insertInsight, countInsights, listInsights, getInsight, getEvent,
     getDetail, selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus, snoozeInsight,
     editInsight, deleteInsightRow, markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics,

@@ -5,7 +5,7 @@ import * as SQLite from "expo-sqlite";
 import { fromByteArray, toByteArray } from "base64-js";
 import {
   BACKUP_EXTENSION, BackupError, assembleBackupContents, deriveBackupKey, newKdfParams, openBackup, readBackupHeader,
-  sealBackup, type BackupOmissions, type PhotoRead,
+  sealBackup, summarizeBackup, type BackupOmissions, type BackupSummary, type PhotoRead,
 } from "./backup";
 import type { Insight } from "./domain";
 import {
@@ -15,7 +15,7 @@ import {
 import { MigrationError, runMigrations } from "./migrations";
 import { createStore } from "./store";
 
-export type { BetaMetrics, NotificationCandidate } from "./store";
+export type { BackupStatus, BetaMetrics, NotificationCandidate } from "./store";
 
 const DATABASE_KEY_NAME = "resurface.database-key.v1";
 const DATABASE_NAME = "resurface.db";
@@ -87,7 +87,7 @@ export async function openStorage(): Promise<void> {
 const store = createStore({ db, id, now: () => new Date() });
 
 export const {
-  track, getSettings, saveSettings, countInsights, listInsights, getInsight, getEvent, getDetail,
+  track, getSettings, saveSettings, getBackupStatus, countInsights, listInsights, getInsight, getEvent, getDetail,
   selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus, snoozeInsight, editInsight,
   markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics, notificationCandidates,
   clearFutureNotificationPlans, setNotificationPlan,
@@ -199,4 +199,15 @@ export async function setAsideUnreadableData(): Promise<string> {
     await SecureStore.deleteItemAsync(name);
   }
   return aside.name;
+}
+
+/**
+ * Checks a chosen backup file without changing anything on the device: the password, integrity,
+ * version, structure and counts must all pass. Only a content-free summary is kept.
+ */
+export async function verifyBackup(text: string, password: string): Promise<BackupSummary> {
+  const contents = openBackup(text, await deriveBackupKey(password, readBackupHeader(text)));
+  const summary = summarizeBackup(contents);
+  await store.recordBackupVerified(summary);
+  return summary;
 }

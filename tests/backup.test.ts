@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import test from "node:test";
 import {
   BACKUP_LIMITS, BackupError, DEFAULT_KDF, assembleBackupContents, deriveBackupKey, describeOmissions, newKdfParams,
-  openBackup, readBackupHeader, sealBackup, validateBackupContents, type BackupContents, type BackupErrorCode, type PhotoRead,
+  openBackup, readBackupHeader, sealBackup, summarizeBackup, validateBackupContents, type BackupContents, type BackupErrorCode, type PhotoRead,
 } from "../src/backup";
 import { harness, local } from "./harness";
 
@@ -244,5 +244,45 @@ test("archives with more records than the device can restore are refused", async
       (error: unknown) => error instanceof BackupError && error.code === "too_large");
     assert.throws(() => validateBackupContents({ ...contents, omissions: { missingPhotos: -1, insightsWithoutPhoto: 0, insightsLeftOut: 0 } }),
       (error: unknown) => error instanceof BackupError && error.code === "invalid_contents");
+  } finally { h.close(); }
+});
+
+test("backup checkup: 'created' and 'verified' are tracked separately and only verification records a summary", async () => {
+  const h = await deviceWithPhotos();
+  try {
+    assert.deepEqual(await h.store.getBackupStatus(), { lastCreatedAt: null, lastCreatedComplete: null, lastVerified: null });
+
+    h.setClock(local(2026, 10, 3, 9));
+    await h.store.track("backup_created_incomplete");
+    h.setClock(local(2026, 10, 3, 10));
+    await h.store.track("backup_created");
+    const created = await h.store.getBackupStatus();
+    assert.equal(created.lastCreatedAt, local(2026, 10, 3, 10).toISOString());
+    assert.equal(created.lastCreatedComplete, true);
+    assert.equal(created.lastVerified, null, "creating a backup is not verifying one");
+
+    const reads = new Map<string, PhotoRead>([["insight-photo", ok("a")], ["insight-captioned", { status: "missing" }]]);
+    const contents = assembleBackupContents(await h.store.exportRows(), reads, local(2026, 10, 3, 10).toISOString(), { allowIncomplete: true });
+    const archive = await seal(contents);
+    const before = await h.store.exportRows();
+
+    // Verification as storage.verifyBackup does it: open, summarize, record — never replace.
+    await rejects(open(archive, "wrong password!"), "wrong_password_or_damaged");
+    assert.equal((await h.store.getBackupStatus()).lastVerified, null, "a failed check records nothing");
+
+    h.setClock(local(2026, 10, 4, 8));
+    const summary = summarizeBackup(await open(archive));
+    await h.store.recordBackupVerified(summary);
+    assert.deepEqual(summary, {
+      exportedAt: local(2026, 10, 3, 10).toISOString(), version: 1, insights: 4, photos: 1,
+      events: contents.events.length, reflections: contents.reflections.length,
+      omissions: { missingPhotos: 1, insightsWithoutPhoto: 1, insightsLeftOut: 0 },
+    });
+    const status = await h.store.getBackupStatus();
+    assert.deepEqual(status.lastVerified, { ...summary, verifiedAt: local(2026, 10, 4, 8).toISOString() });
+    assert.deepEqual(await h.store.exportRows(), before, "verification leaves all data untouched");
+
+    const stored = JSON.stringify(h.sqlite.prepare("SELECT * FROM settings").all()) + JSON.stringify(h.sqlite.prepare("SELECT * FROM analytics").all());
+    for (const secret of ["Private words", "Caption", "A private reflection", PASSWORD]) assert.ok(!stored.includes(secret), `kept ${secret}`);
   } finally { h.close(); }
 });
