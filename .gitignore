@@ -9,3 +9,7 @@ android/
 .env
 .env.*
 !.env.example
+
+# Local Expo modules keep their native sources in the repo.
+!modules/*/ios/
+!modules/*/android/
