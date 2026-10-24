@@ -41,7 +41,7 @@ Compare device-only plus encrypted export, user-controlled backup, and end-to-en
 
 ## Additional Jira work approved 24 October 2026
 
-These six distinct tickets use the existing epics; no new epic was needed. P1 product enrichments should follow pilot evidence and the P0 device gate.
+These six distinct tickets use the existing epics; no new epic was needed. All six were placed in **To Do** (Jira initially created them as In Progress). P1 product enrichments should follow pilot evidence and the P0 device gate.
 
 | Priority | Ticket | Outcome | Parent |
 | --- | --- | --- | --- |
@@ -52,4 +52,4 @@ These six distinct tickets use the existing epics; no new epic was needed. P1 pr
 | P1 | [SCRUM-56](https://alexadima.atlassian.net/browse/SCRUM-56) | Optional multiple categories per insight | SCRUM-28 |
 | P1 | [SCRUM-57](https://alexadima.atlassian.net/browse/SCRUM-57) | Full Romanian localization | SCRUM-23 |
 
-SCRUM-53 is a prerequisite for SCRUM-56. Existing SCRUM-39, 41, 42, and 44 already cover snooze, Share Sheet capture, source/favorites, and Library polish; refine those rather than creating duplicates. Do not prioritize generated advice, social features, streaks, goals, mood tracking, or adaptive schedules without new evidence; they are outside the current product thesis. The immediate next investigation is real-device photo-save performance and P0 acceptance, with schema migrations before persisted feature additions.
+SCRUM-53 formally blocks SCRUM-56 in Jira. Existing SCRUM-39, 41, 42, and 44 already cover snooze, Share Sheet capture, source/favorites, and Library polish; refine those rather than creating duplicates. Do not prioritize generated advice, social features, streaks, goals, mood tracking, or adaptive schedules without new evidence; they are outside the current product thesis. The immediate next investigation is real-device photo-save performance and P0 acceptance, with schema migrations before persisted feature additions.
