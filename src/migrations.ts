@@ -1,4 +1,4 @@
-import { SCHEMA_V1_SQL, SCHEMA_V2_SQL } from "./storage-queries";
+import { SCHEMA_V1_SQL, SCHEMA_V2_SQL, SCHEMA_V3_SQL } from "./storage-queries";
 
 /**
  * Ordered, append-only schema migrations for the encrypted database. The applied version lives in
@@ -10,6 +10,7 @@ export type Migration = { version: number; sql: string };
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, sql: SCHEMA_V1_SQL },
   { version: 2, sql: SCHEMA_V2_SQL },
+  { version: 3, sql: SCHEMA_V3_SQL },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

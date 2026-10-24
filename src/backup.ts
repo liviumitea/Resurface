@@ -2,7 +2,7 @@ import { gcm } from "@noble/ciphers/aes.js";
 import { scryptAsync } from "@noble/hashes/scrypt.js";
 import { fromByteArray, toByteArray } from "base64-js";
 import {
-  MAX_CATEGORY_NAME_LENGTH, isValidInsight, normalizeCategoryName,
+  MAX_CATEGORY_NAME_LENGTH, MAX_SOURCE_LENGTH, isValidInsight, normalizeCategoryName,
   type Category, type Insight, type InsightCategory, type Reflection, type ResurfaceEvent, type Settings,
 } from "./domain";
 
@@ -14,12 +14,13 @@ import {
 
 export const BACKUP_FORMAT = "resurface-backup";
 /**
- * Archive versions this app reads. Version 2 adds categories; an archive is written as version 2
- * only when it has categories, so archives without them stay readable by apps that know only v1,
- * while those apps refuse a v2 archive instead of silently dropping its categories.
+ * Archive versions this app reads. Version 2 adds categories; version 3 adds insight sources and
+ * favorites. An archive is written at the lowest version that holds its data, so it stays readable
+ * by older apps when it can, while an older app refuses a newer archive instead of silently
+ * dropping what it doesn't know.
  */
-export const BACKUP_VERSION = 2;
-export const READABLE_BACKUP_VERSIONS: readonly number[] = [1, 2];
+export const BACKUP_VERSION = 3;
+export const READABLE_BACKUP_VERSIONS: readonly number[] = [1, 2, 3];
 export const BACKUP_EXTENSION = "resurfacebackup";
 /** Declared in app.json so iOS treats backups as ordinary data (for example, offering Save to Files). */
 export const BACKUP_UTI = "app.resurface.mobile.backup";
@@ -41,7 +42,8 @@ export type BackupContents = {
   insightCategories?: InsightCategory[];
 };
 
-export function archiveVersion(contents: Pick<BackupContents, "categories" | "insightCategories">): number {
+export function archiveVersion(contents: Pick<BackupContents, "categories" | "insightCategories"> & { insights?: Pick<Insight, "source" | "favorite">[] }): number {
+  if (contents.insights?.some((insight) => insight.source || insight.favorite)) return 3;
   return contents.categories?.length || contents.insightCategories?.length ? 2 : 1;
 }
 
@@ -245,7 +247,10 @@ export function validateBackupContents(value: unknown, limits: BackupLimits = BA
   for (const item of insights) {
     if (!isRecord(item) || !isText(item.id) || !isOptionalText(item.content) || !isOptionalText(item.context)
       || !isOptionalText(item.imagePath) || !(item.imageMime === null || item.imageMime === "image/jpeg")
-      || !["active", "paused", "archived"].includes(item.status as string) || !isTimestamp(item.createdAt) || !isTimestamp(item.updatedAt)) {
+      || !["active", "paused", "archived"].includes(item.status as string) || !isTimestamp(item.createdAt) || !isTimestamp(item.updatedAt)
+      // Version 3 fields; absent in older archives, which restore with no source and not favorite.
+      || !(item.source === undefined || item.source === null || (typeof item.source === "string" && item.source.trim().length > 0 && item.source.length <= MAX_SOURCE_LENGTH))
+      || !(item.favorite === undefined || item.favorite === 0 || item.favorite === 1)) {
       throw invalid("insight record");
     }
     if (insightById.has(item.id)) throw invalid("duplicate insight");

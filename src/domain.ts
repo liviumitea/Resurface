@@ -8,7 +8,12 @@ export type Insight = {
   status: InsightStatus;
   createdAt: string;
   updatedAt: string;
+  /** Optional, free-text origin (a book, a person, a link). Schema 3. */
+  source: string | null;
+  /** 1 when the user starred it. Stored as an SQLite integer. Schema 3. */
+  favorite: 0 | 1;
 };
+export const MAX_SOURCE_LENGTH = 200;
 
 export type ResurfaceResponse = "yes" | "not_now" | "not_anymore" | null;
 export type ResurfaceEvent = {

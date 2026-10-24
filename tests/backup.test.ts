@@ -106,7 +106,7 @@ test("files that are not backups, newer versions, and abusive key parameters are
   const archive = JSON.parse(await seal({}));
   assert.throws(() => readBackupHeader("plain text"), (error: unknown) => error instanceof BackupError && error.code === "not_a_backup");
   assert.throws(() => readBackupHeader(JSON.stringify({ hello: "world" })), (error: unknown) => error instanceof BackupError && error.code === "not_a_backup");
-  assert.throws(() => readBackupHeader(JSON.stringify({ ...archive, version: 3 })), (error: unknown) => error instanceof BackupError && error.code === "unsupported_version");
+  assert.throws(() => readBackupHeader(JSON.stringify({ ...archive, version: 99 })), (error: unknown) => error instanceof BackupError && error.code === "unsupported_version");
   for (const kdf of [{ N: 2 ** 24 }, { N: 3000 }, { r: 64 }, { p: 0 }, { salt: "%%%" }]) {
     assert.throws(() => readBackupHeader(JSON.stringify({ ...archive, kdf: { ...archive.kdf, ...kdf } })),
       (error: unknown) => error instanceof BackupError && error.code === "not_a_backup", JSON.stringify(kdf));

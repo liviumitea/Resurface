@@ -1,5 +1,6 @@
 import {
   MAX_CATEGORY_NAME_LENGTH,
+  MAX_SOURCE_LENGTH,
   dueForStage,
   localDay,
   normalizeCategoryName,
@@ -37,6 +38,11 @@ export type StoreDependencies = {
 };
 
 export type NotificationCandidate = ResurfaceEvent & { content: string | null };
+
+function cleanSource(source: string | null): string | null {
+  const trimmed = source?.trim().replace(/\s+/g, " ") ?? "";
+  return trimmed ? trimmed.slice(0, MAX_SOURCE_LENGTH) : null;
+}
 
 export type CategoryProblem = "empty" | "too_long" | "duplicate" | "missing";
 export class CategoryError extends Error {
@@ -125,7 +131,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
   }
 
   /** Inserts the insight, its first event and any categories; the caller owns any already-encrypted photo. */
-  async function insertInsight(insightId: string, content: string | null, context: string | null, imagePath: string | null, categoryIds: string[] = []): Promise<Insight> {
+  async function insertInsight(insightId: string, content: string | null, context: string | null, imagePath: string | null, categoryIds: string[] = [], source: string | null = null): Promise<Insight> {
     const created = now();
     const insight: Insight = {
       id: insightId,
@@ -136,12 +142,14 @@ export function createStore({ db, id, now }: StoreDependencies) {
       status: "active",
       createdAt: created.toISOString(),
       updatedAt: created.toISOString(),
+      source: cleanSource(source),
+      favorite: 0,
     };
     await db().withTransactionAsync(async () => {
       await db().runAsync(
-        "INSERT INTO insights (id, content, context, imagePath, imageMime, status, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO insights (id, content, context, imagePath, imageMime, status, createdAt, updatedAt, source, favorite) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         insight.id, insight.content, insight.context, insight.imagePath, insight.imageMime,
-        insight.status, insight.createdAt, insight.updatedAt,
+        insight.status, insight.createdAt, insight.updatedAt, insight.source, insight.favorite,
       );
       await insertEvent(eventFor(insight.id, 0, created));
       await linkCategories(insight.id, categoryIds);
@@ -155,19 +163,20 @@ export function createStore({ db, id, now }: StoreDependencies) {
     return (await db().getFirstAsync<{ count: number }>("SELECT count(*) AS count FROM insights"))?.count ?? 0;
   }
 
-  async function listInsights(status: InsightStatus, search = "", categoryId: string | null = null): Promise<Insight[]> {
+  async function listInsights(status: InsightStatus, search = "", categoryId: string | null = null, favoritesOnly = false): Promise<Insight[]> {
     const normalized = search.trim().toLowerCase();
     const where = ["status = ?"];
     const params: (string | number | null)[] = [status];
     if (normalized) {
       const escaped = normalized.replace(/[\\%_]/g, "\\$&");
-      where.push("(lower(content) LIKE ? ESCAPE '\\' OR lower(context) LIKE ? ESCAPE '\\')");
-      params.push(`%${escaped}%`, `%${escaped}%`);
+      where.push("(lower(content) LIKE ? ESCAPE '\\' OR lower(context) LIKE ? ESCAPE '\\' OR lower(source) LIKE ? ESCAPE '\\')");
+      params.push(`%${escaped}%`, `%${escaped}%`, `%${escaped}%`);
     }
     if (categoryId) {
       where.push("id IN (SELECT insightId FROM insight_categories WHERE categoryId = ?)");
       params.push(categoryId);
     }
+    if (favoritesOnly) where.push("favorite = 1");
     return db().getAllAsync<Insight>(`SELECT * FROM insights WHERE ${where.join(" AND ")} ORDER BY createdAt DESC`, ...params);
   }
 
@@ -348,8 +357,13 @@ export function createStore({ db, id, now }: StoreDependencies) {
     });
   }
 
-  async function editInsight(insightId: string, content: string | null, context: string | null): Promise<void> {
-    await db().runAsync("UPDATE insights SET content = ?, context = ?, updatedAt = ? WHERE id = ?", content?.trim() || null, context?.trim() || null, now().toISOString(), insightId);
+  async function editInsight(insightId: string, content: string | null, context: string | null, source: string | null = null): Promise<void> {
+    await db().runAsync("UPDATE insights SET content = ?, context = ?, source = ?, updatedAt = ? WHERE id = ?", content?.trim() || null, context?.trim() || null, cleanSource(source), now().toISOString(), insightId);
+  }
+
+  /** Stars or unstars an insight; this is not a response and does not affect resurfacing. */
+  async function setFavorite(insightId: string, favorite: boolean): Promise<void> {
+    await db().runAsync("UPDATE insights SET favorite = ? WHERE id = ?", favorite ? 1 : 0, insightId);
   }
 
   /** Deletes the insight with its events and reflections; returns the photo path for the caller to remove. */
@@ -439,8 +453,9 @@ export function createStore({ db, id, now }: StoreDependencies) {
         const imagePath = insight.imagePath === null ? null : imagePaths[insight.id];
         if (imagePath === undefined) throw new Error("A restored photo is missing.");
         await db().runAsync(
-          "INSERT INTO insights (id, content, context, imagePath, imageMime, status, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO insights (id, content, context, imagePath, imageMime, status, createdAt, updatedAt, source, favorite) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           insight.id, insight.content, insight.context, imagePath, insight.imageMime, insight.status, insight.createdAt, insight.updatedAt,
+          insight.source ?? null, insight.favorite ?? 0,
         );
       }
       for (const event of contents.events) {
@@ -483,7 +498,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
 
   return {
     exportRows, replaceAllRows, recordBackupVerified, getBackupStatus,
-    listCategories, createCategory, renameCategory, deleteCategory, setInsightCategories,
+    listCategories, createCategory, renameCategory, deleteCategory, setInsightCategories, setFavorite,
     track, getSettings, saveSettings, insertInsight, countInsights, listInsights, getInsight, getEvent,
     getDetail, selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus, snoozeInsight,
     editInsight, deleteInsightRow, markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics,

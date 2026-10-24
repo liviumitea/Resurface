@@ -66,6 +66,12 @@ export const SCHEMA_V2_SQL = `
   CREATE INDEX IF NOT EXISTS insight_categories_category ON insight_categories(categoryId);
 `;
 
+/** Schema version 3: optional source and a favorite flag on insights (SCRUM-42). */
+export const SCHEMA_V3_SQL = `
+  ALTER TABLE insights ADD COLUMN source TEXT;
+  ALTER TABLE insights ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1));
+`;
+
 export const SELECT_TODAY_EXISTING_SQL = `
   SELECT events.* FROM events JOIN insights ON insights.id = events.insightId
   WHERE events.selectedDay = ? AND events.cancelledAt IS NULL AND insights.status = 'active'

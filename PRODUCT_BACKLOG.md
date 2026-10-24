@@ -30,7 +30,7 @@ Jira epics: [core loop](https://alexadima.atlassian.net/browse/SCRUM-23), [data 
 ## Epic 4 — Easier capture and retrieval (P1)
 
 13. **Share Sheet capture.** Accept text, links, and images from other apps on both platforms. Gate: shared content opens an editable draft, explicit Save is required, and cancellation leaves no persisted insight.
-14. **Source attribution and favorites.** Add optional source metadata and a favorite flag with search/filter support. Gate: existing records migrate safely; neither field is required for capture.
+14. **Source attribution and favorites.** Add optional source metadata and a favorite flag with search/filter support. Gate: existing records migrate safely; neither field is required for capture. *Status (SCRUM-42, 24 Oct 2026): implemented as schema 3 — optional source (≤200 chars) at capture/edit, shown on detail and Library rows and included in search; a favorite star on detail with a Library favorites filter that combines with status, category and search; neither affects resurfacing. Backups with either are archive v3; older archives restore without them. Tests and iOS simulator check done.*
 15. **OCR quality and fallback.** Test English/Romanian images, rotated/cropped images, poor light, and image-only fallback. Gate: editable OCR never replaces the original image and failures do not discard the draft.
 16. **Library/history polish.** Improve empty states, search performance, image display, chronology, and reflection editing if pilot feedback supports it. Gate: migrated data and all lifecycle history remain accurate.
 

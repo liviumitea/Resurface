@@ -14,14 +14,14 @@ import {
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { BACKUP_LIMITS, BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH, type BackupOmissions } from "./src/backup";
 import { formatDate, formatDateTime, formatLongDay, resolveLanguage, setLanguage, t, type MessageKey } from "./src/i18n";
-import { MAX_CATEGORY_NAME_LENGTH, addCalendarDays, isValidInsight, type Category, type CategoryWithCount, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
+import { MAX_CATEGORY_NAME_LENGTH, MAX_SOURCE_LENGTH, addCalendarDays, isValidInsight, type Category, type CategoryWithCount, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
 import { clearTransientCaches, deletePickedImageFromCache, imageDataUri } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
   countInsights, createBackupFile, createInsight, deleteCachedFile, deleteInsight, editInsight, getBetaMetrics, getDetail,
   getEvent, getInsight, getSettings, getShownCount, listInsights, markCompleted, markValueFeedbackAsked, markOpened, markShown,
   openStorage, respondToEvent, restoreBackup, setAsideUnreadableData, snoozeInsight, StorageError, verifyBackup,
-  CategoryError, createCategory, deleteCategory, listCategories, renameCategory, setInsightCategories,
+  CategoryError, createCategory, deleteCategory, listCategories, renameCategory, setFavorite, setInsightCategories,
   getBackupStatus, type BackupStatus, type BetaMetrics, type StorageFailure, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
 } from "./src/storage";
 import { palette } from "./src/theme";
@@ -139,6 +139,9 @@ function ResurfaceApp() {
   const [categories, setCategories] = useState<CategoryWithCount[]>([]);
   const [libraryCategory, setLibraryCategory] = useState<string | null>(null);
   const [captureCategoryIds, setCaptureCategoryIds] = useState<string[]>([]);
+  const [captureSource, setCaptureSource] = useState("");
+  const [editSource, setEditSource] = useState("");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [editCategoryIds, setEditCategoryIds] = useState<string[]>([]);
   const [renamingCategory, setRenamingCategory] = useState<{ id: string; name: string } | null>(null);
   const [libraryError, setLibraryError] = useState(false);
@@ -214,6 +217,7 @@ function ResurfaceApp() {
     setEditContent(found.insight.content ?? "");
     setEditContext(found.insight.context ?? "");
     setEditCategoryIds(found.categories.map((category) => category.id));
+    setEditSource(found.insight.source ?? "");
     setRoute("detail");
   }, [goToday]);
 
@@ -326,11 +330,11 @@ function ResurfaceApp() {
   useEffect(() => {
     if (route !== "library") return;
     let active = true;
-    listInsights(libraryStatus, librarySearch, libraryCategory)
+    listInsights(libraryStatus, librarySearch, libraryCategory, favoritesOnly)
       .then((items) => { if (active) { setLibraryItems(items); setLibraryError(false); } })
       .catch(() => { if (active) setLibraryError(true); });
     return () => { active = false; };
-  }, [route, libraryStatus, librarySearch, libraryCategory, libraryAttempt]);
+  }, [route, libraryStatus, librarySearch, libraryCategory, favoritesOnly, libraryAttempt]);
 
   const beginCapture = (origin: CaptureOrigin) => {
     deletePickedImageFromCache(captureImageUri);
@@ -339,6 +343,7 @@ function ResurfaceApp() {
     setCaptureContext("");
     setCaptureImageUri(null);
     setCaptureCategoryIds([]);
+    setCaptureSource("");
     setRoute("capture");
   };
 
@@ -393,7 +398,7 @@ function ResurfaceApp() {
     setBusy(true);
     try {
       const wasFirst = (await countInsights()) === 0;
-      const insight = await createInsight(captureContent, captureContext, captureImageUri, captureCategoryIds);
+      const insight = await createInsight(captureContent, captureContext, captureImageUri, captureCategoryIds, captureSource);
       deletePickedImageFromCache(captureImageUri);
       setCaptureImageUri(null);
       setSavedInsightId(insight.id);
@@ -506,11 +511,19 @@ function ResurfaceApp() {
   const saveEdit = async () => {
     if (!detail || !isValidInsight(editContent, !!detail.insight.imagePath)) return;
     try {
-      await editInsight(detail.insight.id, editContent, editContext);
+      await editInsight(detail.insight.id, editContent, editContext, editSource);
       await setInsightCategories(detail.insight.id, editCategoryIds);
       setEditing(false);
       await openDetail(detail.insight.id, detailOrigin);
       if (settings) await reconcileNotifications(settings);
+    } catch (error) { report(error); }
+  };
+
+  const toggleFavorite = async () => {
+    if (!detail) return;
+    try {
+      await setFavorite(detail.insight.id, !detail.insight.favorite);
+      setDetail({ ...detail, insight: { ...detail.insight, favorite: detail.insight.favorite ? 0 : 1 } });
     } catch (error) { report(error); }
   };
 
@@ -744,6 +757,8 @@ function ResurfaceApp() {
       {captureImageUri && <View style={screenStyles.attached}><Ionicons name="image-outline" size={18} color={palette.accentDark} /><Text style={screenStyles.attachedText}>{t("capture.photoAttached")}</Text><IconButton icon="close" label={t("capture.removePhoto")} onPress={() => { deletePickedImageFromCache(captureImageUri); setCaptureImageUri(null); }} /></View>}
       <Text style={screenStyles.fieldLabel}>{t("capture.contextLabel")} <Text style={screenStyles.optional}>{t("common.optional")}</Text></Text>
       <TextInput multiline textAlignVertical="top" placeholder={t("capture.contextPlaceholder")} placeholderTextColor={palette.muted} value={captureContext} onChangeText={setCaptureContext} style={screenStyles.contextInput} accessibilityLabel={t("capture.contextA11y")} />
+      <Text style={screenStyles.fieldLabel}>{t("capture.sourceLabel")} <Text style={screenStyles.optional}>{t("common.optional")}</Text></Text>
+      <TextInput value={captureSource} onChangeText={setCaptureSource} maxLength={MAX_SOURCE_LENGTH} placeholder={t("capture.sourcePlaceholder")} placeholderTextColor={palette.muted} style={screenStyles.search} accessibilityLabel={t("capture.sourceA11y")} />
       <Text style={screenStyles.fieldLabel}>{t("category.field")} <Text style={screenStyles.optional}>{t("common.optional")}</Text></Text>
       <CategoryChips categories={categories} selected={captureCategoryIds} onToggle={(categoryId) => setCaptureCategoryIds((ids) => toggle(ids, categoryId))} onCreate={(name) => addCategory(name, (categoryId) => setCaptureCategoryIds((ids) => [...ids, categoryId]))} />
       <View style={screenStyles.row}><View style={screenStyles.flex}><Action kind="secondary" icon="camera-outline" label={t("choice.takePhoto")} onPress={() => { void pickImage("camera"); }} /></View><View style={screenStyles.flex}><Action kind="secondary" icon="images-outline" label={t("choice.choosePhoto")} onPress={() => { void pickImage("library"); }} /></View></View>
@@ -822,6 +837,11 @@ function ResurfaceApp() {
       <ScrollView contentContainerStyle={screenStyles.libraryList} keyboardShouldPersistTaps="handled">
       <View><Eyebrow>{t("library.eyebrow")}</Eyebrow><Title>{t("library.title")}</Title><TextInput placeholder={t("library.search")} placeholderTextColor={palette.muted} value={librarySearch} onChangeText={setLibrarySearch} style={screenStyles.search} accessibilityLabel={t("library.searchLabel")} /></View>
       <View style={screenStyles.filters}>{(["active", "paused", "archived"] as InsightStatus[]).map((status) => <Pressable key={status} accessibilityRole="tab" accessibilityState={{ selected: libraryStatus === status }} onPress={() => setLibraryStatus(status)} style={[screenStyles.filter, libraryStatus === status && screenStyles.selectedFilter]}><Text style={[screenStyles.filterText, libraryStatus === status && screenStyles.selectedFilterText]}>{t(`library.status.${status}` as MessageKey)}</Text></Pressable>)}</View>
+      <View style={[screenStyles.chipWrap, screenStyles.favoritesRow]}>
+        <Pressable accessibilityRole="switch" accessibilityState={{ checked: favoritesOnly }} accessibilityLabel={t("library.favoritesLabel")} onPress={() => setFavoritesOnly((value) => !value)} style={[screenStyles.filter, favoritesOnly && screenStyles.selectedFilter]}>
+          <Text style={[screenStyles.filterText, favoritesOnly && screenStyles.selectedFilterText]}>{t("library.favorites")}</Text>
+        </Pressable>
+      </View>
       {categories.length > 0 && <View style={screenStyles.chipWrap}>
         {[{ id: null, name: t("category.all") }, ...categories].map((category) => {
           const on = libraryCategory === category.id;
@@ -832,25 +852,29 @@ function ResurfaceApp() {
       </View>}
       <Pressable accessibilityRole="button" onPress={() => setRoute("categories")} style={screenStyles.manageLink}><Text style={screenStyles.textLinkInline}>{t("category.manage")}</Text></Pressable>
         {libraryError ? <Surface style={screenStyles.emptyCard}><Ionicons name="cloud-offline-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{t("library.errorTitle")}</Text><Body muted>{t("library.errorBody")}</Body><View style={screenStyles.gap24}><Action label={t("common.tryAgain")} icon="refresh" onPress={() => setLibraryAttempt((attempt) => attempt + 1)} /></View></Surface>
-          : libraryItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="albums-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{librarySearch ? t("library.noMatches") : libraryCategory ? t(`library.emptyInCategory.${libraryStatus}` as MessageKey) : t(`library.empty.${libraryStatus}` as MessageKey)}</Text><Body muted>{t("library.emptyBody")}</Body></Surface>
-          : libraryItems.map((insight) => <Pressable key={insight.id} accessibilityRole="button" onPress={() => { void openDetail(insight.id); }} style={screenStyles.libraryRow}><View style={screenStyles.libraryIcon}><Ionicons name={insight.imagePath ? "image-outline" : "bookmark-outline"} size={19} color={palette.accentDark} /></View><View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{insight.content || t("common.savedPhoto")}</Text><Text style={screenStyles.libraryDate}>{formatDate(insight.createdAt)}</Text></View><Ionicons name="chevron-forward" size={17} color={palette.muted} /></Pressable>)}
+          : libraryItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="albums-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{librarySearch ? t("library.noMatches") : favoritesOnly ? t("library.emptyFavorites") : libraryCategory ? t(`library.emptyInCategory.${libraryStatus}` as MessageKey) : t(`library.empty.${libraryStatus}` as MessageKey)}</Text><Body muted>{t("library.emptyBody")}</Body></Surface>
+          : libraryItems.map((insight) => <Pressable key={insight.id} accessibilityRole="button" onPress={() => { void openDetail(insight.id); }} style={screenStyles.libraryRow}><View style={screenStyles.libraryIcon}><Ionicons name={insight.imagePath ? "image-outline" : "bookmark-outline"} size={19} color={palette.accentDark} /></View><View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{insight.content || t("common.savedPhoto")}</Text><Text style={screenStyles.libraryDate}>{formatDate(insight.createdAt)}{insight.source ? ` · ${insight.source}` : ""}</Text></View>{!!insight.favorite && <Ionicons name="star" size={16} color={palette.accentDark} accessibilityLabel={t("library.favoriteMark")} />}<Ionicons name="chevron-forward" size={17} color={palette.muted} /></Pressable>)}
       </ScrollView>
       <BottomNav active="library" onToday={() => { void goToday(); }} onCapture={() => openCaptureChoice("library")} onLibrary={goLibrary} />
     </Screen>}
 
     {route === "detail" && detail && <Screen>
-      <Header title={t("detail.header")} back={() => { if (detailOrigin === "library") goLibrary(); else if (firstSave && !settings.permissionAsked) setRoute("permission"); else void goToday(); }} />
+      <Header title={t("detail.header")} back={() => { if (detailOrigin === "library") goLibrary(); else if (firstSave && !settings.permissionAsked) setRoute("permission"); else void goToday(); }}
+        right={<IconButton icon={detail.insight.favorite ? "star" : "star-outline"} label={detail.insight.favorite ? t("detail.unfavorite") : t("detail.favorite")} onPress={() => { void toggleFavorite(); }} />} />
       <Eyebrow>{t("detail.eyebrow", { status: t(`detail.status.${detail.insight.status}` as MessageKey), date: formatDate(detail.insight.createdAt) })}</Eyebrow>
       {editing ? <>
         <Title>{t("detail.editTitle")}</Title>
         <TextInput multiline textAlignVertical="top" value={editContent} onChangeText={setEditContent} placeholder={t("capture.title")} style={screenStyles.captureInput} accessibilityLabel={t("detail.editTextLabel")} />
         <Text style={screenStyles.fieldLabel}>{t("detail.context")}</Text><TextInput multiline textAlignVertical="top" value={editContext} onChangeText={setEditContext} style={screenStyles.contextInput} accessibilityLabel={t("detail.editContextLabel")} />
+        <Text style={screenStyles.fieldLabel}>{t("capture.sourceLabel")} <Text style={screenStyles.optional}>{t("common.optional")}</Text></Text>
+        <TextInput value={editSource} onChangeText={setEditSource} maxLength={MAX_SOURCE_LENGTH} placeholder={t("capture.sourcePlaceholder")} placeholderTextColor={palette.muted} style={screenStyles.search} accessibilityLabel={t("capture.sourceA11y")} />
         <Text style={screenStyles.fieldLabel}>{t("category.field")} <Text style={screenStyles.optional}>{t("common.optional")}</Text></Text>
         <CategoryChips categories={categories} selected={editCategoryIds} onToggle={(categoryId) => setEditCategoryIds((ids) => toggle(ids, categoryId))} onCreate={(name) => addCategory(name, (categoryId) => setEditCategoryIds((ids) => [...ids, categoryId]))} />
         <View style={screenStyles.gap24}><Action label={t("detail.saveChanges")} disabled={!isValidInsight(editContent, !!detail.insight.imagePath)} onPress={() => { void saveEdit(); }} /></View>
         <View style={screenStyles.gap12}><Action kind="ghost" label={t("common.cancel")} onPress={() => setEditing(false)} /></View>
       </> : <>
         <InsightCard insight={detail.insight} />
+        {!!detail.insight.source && <View style={screenStyles.gap12}><Body muted>{t("detail.source", { source: detail.insight.source })}</Body></View>}
         {detail.categories.length > 0 && <View style={[screenStyles.chipWrap, screenStyles.gap12]} accessibilityLabel={t("category.tags", { names: detail.categories.map((category) => category.name).join(", ") })}>
           {detail.categories.map((category) => <View key={category.id} style={[screenStyles.filter, screenStyles.categoryTag]}><Text style={screenStyles.filterText}>{category.name}</Text></View>)}
         </View>}
@@ -1008,6 +1032,7 @@ const screenStyles = StyleSheet.create({
   addChip: { backgroundColor: "transparent", borderWidth: 1, borderColor: palette.border, borderStyle: "dashed" },
   categoryTag: { minHeight: 32, paddingVertical: 6 },
   newCategory: { flexDirection: "row", alignItems: "center", gap: 8, width: "100%" },
+  favoritesRow: { marginBottom: 8 },
   manageLink: { minHeight: 44, justifyContent: "center", alignSelf: "flex-start", marginBottom: 8 },
   textLinkInline: { color: palette.accentDark, fontWeight: "700" },
   emptyCard: { alignItems: "flex-start", marginTop: 18, gap: 12 }, emptyTitle: { color: palette.ink, fontSize: 22, fontWeight: "700", marginTop: 12 },

@@ -37,7 +37,8 @@ test("the 0.1.0 database upgrades to the current schema with every record intact
     assert.equal(await schemaVersion(migrationDatabase(sqlite)), 0);
     assert.equal(await runMigrations(migrationDatabase(sqlite)), SCHEMA_VERSION);
     assert.equal(await schemaVersion(migrationDatabase(sqlite)), SCHEMA_VERSION);
-    assert.deepEqual(snapshot(sqlite), before, "insights, photo paths, events, reflections, settings and counters unchanged");
+    const expected = { ...before, insights: before.insights!.map((row) => ({ ...row, source: null, favorite: 0 })) };
+    assert.deepEqual(snapshot(sqlite), expected, "insights, photo paths, events, reflections, settings and counters unchanged; new fields start empty");
 
     // The production store works on the upgraded data.
     const store = createStore({ db: () => adapt(sqlite), id: () => "new-id", now: () => local(2026, 10, 6, 10) });
@@ -76,25 +77,25 @@ test("a failed migration rolls back to the previous readable version with a non-
     const broken: Migration[] = [...MIGRATIONS, {
       version: SCHEMA_VERSION + 1,
       // The first statement succeeds, the second fails: both must be undone.
-      sql: "ALTER TABLE insights ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0; UPDATE insights SET favorite = 1; ALTER TABLE missing_table ADD COLUMN x TEXT;",
+      sql: "ALTER TABLE insights ADD COLUMN test_flag INTEGER NOT NULL DEFAULT 0; UPDATE insights SET test_flag = 1; ALTER TABLE missing_table ADD COLUMN x TEXT;",
     }];
     await assert.rejects(runMigrations(migrationDatabase(sqlite), broken),
       (error: unknown) => error instanceof MigrationError && error.reason === "migration_failed" && /has not been changed/.test(error.message));
     assert.equal(await schemaVersion(migrationDatabase(sqlite)), SCHEMA_VERSION, "version not bumped");
     assert.deepEqual(snapshot(sqlite), before, "data and columns as before");
     const columns = sqlite.prepare("PRAGMA table_info(insights)").all().map((row) => (row as { name: string }).name);
-    assert.ok(!columns.includes("favorite"), "the partly applied column was rolled back");
+    assert.ok(!columns.includes("test_flag"), "the partly applied column was rolled back");
   } finally { sqlite.close(); }
 });
 
 test("a later migration applies on top and keeps data", async () => {
   const sqlite = releasedDatabase();
   try {
-    const next: Migration[] = [...MIGRATIONS, { version: SCHEMA_VERSION + 1, sql: "ALTER TABLE insights ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;" }];
+    const next: Migration[] = [...MIGRATIONS, { version: SCHEMA_VERSION + 1, sql: "ALTER TABLE insights ADD COLUMN test_flag INTEGER NOT NULL DEFAULT 0;" }];
     const before = snapshot(sqlite);
     assert.equal(await runMigrations(migrationDatabase(sqlite), next), SCHEMA_VERSION + 1);
     const after = snapshot(sqlite);
-    assert.deepEqual(after.insights, before.insights!.map((row) => ({ ...row, favorite: 0 })));
+    assert.deepEqual(after.insights, before.insights!.map((row) => ({ ...row, source: null, favorite: 0, test_flag: 0 })));
     assert.deepEqual(after.events, before.events);
   } finally { sqlite.close(); }
 });

@@ -88,17 +88,17 @@ export async function openStorage(): Promise<void> {
 const store = createStore({ db, id, now: () => new Date() });
 
 export const {
-  track, getSettings, saveSettings, getBackupStatus, listCategories, createCategory, renameCategory, deleteCategory, setInsightCategories, countInsights, listInsights, getInsight, getEvent, getDetail,
+  track, getSettings, saveSettings, getBackupStatus, listCategories, createCategory, renameCategory, deleteCategory, setInsightCategories, setFavorite, countInsights, listInsights, getInsight, getEvent, getDetail,
   selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus, snoozeInsight, editInsight,
   markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics, notificationCandidates,
   clearFutureNotificationPlans, setNotificationPlan,
 } = store;
 
-export async function createInsight(content: string | null, context: string | null, imageUri: string | null, categoryIds: string[] = []): Promise<Insight> {
+export async function createInsight(content: string | null, context: string | null, imageUri: string | null, categoryIds: string[] = [], source: string | null = null): Promise<Insight> {
   const insightId = id();
   const imagePath = imageUri ? await encryptImageFromUri(imageUri, insightId) : null;
   try {
-    return await store.insertInsight(insightId, content, context, imagePath, categoryIds);
+    return await store.insertInsight(insightId, content, context, imagePath, categoryIds, source);
   } catch (error) {
     deleteEncryptedImage(imagePath);
     throw error;
