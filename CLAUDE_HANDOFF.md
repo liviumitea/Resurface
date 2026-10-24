@@ -1,6 +1,6 @@
 # Resurface — continuation handoff
 
-Updated 23 October 2026 (evening). This file is the durable handoff for the next coding assistant. Read this, then `README.md`, `PRODUCT_BACKLOG.md`, the current code, and the linked product spec before changing behavior. Do not infer that an implemented screen or a successful compile is a tested product.
+Updated 24 October 2026. This file is the durable handoff for the next coding assistant. Read this, then `README.md`, `PRODUCT_ROADMAP.md` (latest review and priorities), `PRODUCT_BACKLOG.md`, the current code, and the linked product spec before changing behavior. Do not infer that an implemented screen or a successful compile is a tested product.
 
 ## Mission and sources of truth
 
@@ -54,6 +54,8 @@ Not verified: any physical device; Android beyond CI build (no Android device av
 - `ios/`, `android/`, `.expo/`, `node_modules/` are gitignored; `prebuild --clean` regenerates native folders, so inspect for manual native changes first. Do not wipe user data to make a test pass.
 
 ## Suggested next steps
+
+The 24 October review in `PRODUCT_ROADMAP.md` supersedes the ordering below: backup completeness and restore limits come before further feature work, followed by a measured photo-save fix. The notes below remain useful implementation context.
 
 0. **Photo save is very slow (start here).** Measured on the iOS simulator, 23 Oct 2026: `ImageManipulator.manipulateAsync` took 13–115 s on a photo-library pick (HEIC), while size lookup, reading bytes, AES encryption and writing took under 50 ms combined. Photos are now downscaled to a 2048 px long edge (4 MB → ~0.7 MB encrypted), which helps storage and backups but not the speed. Try the newer `ImageManipulator.manipulate(uri).resize(...).renderAsync()` API, or have the picker return compressed JPEG (`quality < 1`), and check a real device before deciding. Backup/restore with photos is still untested; the simulator now holds two photo insights for that test.
 1. Physical iPhone acceptance (SCRUM-31): full core loop, notifications/deep links, VoiceOver, backup/restore with photos, app update keeping data. Then close SCRUM-33/51 with evidence.

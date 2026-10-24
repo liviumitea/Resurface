@@ -1,6 +1,6 @@
 # Resurface
 
-For the current state, verification limits, Jira links, and next implementation steps, see [CLAUDE_HANDOFF.md](CLAUDE_HANDOFF.md).
+For the current state and verification limits, see [CLAUDE_HANDOFF.md](CLAUDE_HANDOFF.md). For the prioritized improvements and future features, see [PRODUCT_ROADMAP.md](PRODUCT_ROADMAP.md).
 
 Resurface is a local-first iOS and Android beta for saving personal insights and bringing them back over time. The app implements the product's v0.2 core loop: capture → resurface → reflect → continue.
 
@@ -13,6 +13,7 @@ Resurface is a local-first iOS and Android beta for saving personal insights and
 - Searchable Library, detail/history, editing, pause/resume, archive/restore, and permanent deletion.
 - Local notification scheduling, a generic lock-screen message by default, and a setting to opt into showing insight text.
 - Content-free usage counters stored only on device.
+- Password-protected encrypted export and replace-only restore (still awaiting full physical-device acceptance).
 
 ## Architecture and privacy
 
@@ -20,7 +21,7 @@ This beta has no account, backend, or cloud sync. Insight text, reflection histo
 
 Personal content is not uploaded by this app. The image picker and image manipulator may create short-lived plaintext files in the app cache; the app removes the picker/manipulator copies it can identify after saving or discarding them. OS cache and backup behavior should be reviewed on physical devices before a wider launch.
 
-**There is no export or backup yet.** Uninstalling the app, losing the device, or losing its encryption keys may permanently lose the insights. Do not use this beta as the only copy of irreplaceable material.
+Password-protected backup and restore are implemented, but have not completed physical-device acceptance, particularly with photos. A backup password cannot be recovered. Uninstalling the app, losing the device or keys, or having an incomplete backup may permanently lose insights. Do not use this beta as the only copy of irreplaceable material. See the [roadmap](PRODUCT_ROADMAP.md) for the backup safety work required before wider distribution.
 
 ## Scheduling decisions
 
