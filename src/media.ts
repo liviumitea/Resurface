@@ -42,13 +42,19 @@ function imageSize(uri: string): Promise<{ width: number; height: number } | nul
 export async function encryptImageFromUri(uri: string, imageId: string): Promise<string> {
   const size = await imageSize(uri);
   // Only ever shrink. Without a known size the photo is kept as it is rather than risk upscaling.
-  const resize: ImageManipulator.Action[] = size && Math.max(size.width, size.height) > MAX_PHOTO_EDGE
-    ? [{ resize: size.width >= size.height ? { width: MAX_PHOTO_EDGE } : { height: MAX_PHOTO_EDGE } }]
-    : [];
-  const normalized = await ImageManipulator.manipulateAsync(uri, resize, {
-    compress: 0.82,
-    format: ImageManipulator.SaveFormat.JPEG,
-  });
+  const resize = size && Math.max(size.width, size.height) > MAX_PHOTO_EDGE
+    ? (size.width >= size.height ? { width: MAX_PHOTO_EDGE } : { height: MAX_PHOTO_EDGE })
+    : null;
+  // SDK 57's contextual API (manipulateAsync is deprecated). On the iOS simulator, decoding a
+  // full-size library HEIC here took 13–115 s with either API; measure on a real device.
+  const context = ImageManipulator.ImageManipulator.manipulate(uri);
+  let normalized: ImageManipulator.ImageResult;
+  try {
+    if (resize) context.resize(resize);
+    const image = await context.renderAsync();
+    try { normalized = await image.saveAsync({ compress: 0.82, format: ImageManipulator.SaveFormat.JPEG }); }
+    finally { image.release(); }
+  } finally { context.release(); }
   try {
     const plaintext = await new File(normalized.uri).bytes();
     const sealed = await aesEncryptAsync(plaintext, await imageKey());
