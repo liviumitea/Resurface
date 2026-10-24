@@ -5,7 +5,6 @@ import * as Sharing from "expo-sharing";
 import { StatusBar } from "expo-status-bar";
 import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
-import { extractTextFromImage, isSupported as isOcrSupported } from "expo-text-extractor";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert, AppState, BackHandler, Image, Linking, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView,
@@ -15,7 +14,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { BACKUP_LIMITS, BACKUP_UTI, BackupError, MIN_BACKUP_PASSWORD_LENGTH, type BackupOmissions } from "./src/backup";
 import { formatDate, formatDateTime, formatLongDay, resolveLanguage, setLanguage, t, type MessageKey } from "./src/i18n";
 import { MAX_CATEGORY_NAME_LENGTH, MAX_SOURCE_LENGTH, addCalendarDays, draftFromShared, type LibraryItem, type LibrarySort, isValidInsight, type Category, type CategoryWithCount, shouldAskValueFeedback, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
-import { SharedImageError, clearShareContainerFiles, clearTransientCaches, deletePickedImageFromCache, imageDataUri, takeSharedImage } from "./src/media";
+import { SharedImageError, clearShareContainerFiles, clearTransientCaches, deletePickedImageFromCache, imageDataUri, isTextRecognitionSupported, recognizeText, takeSharedImage, type PhotoSaveStage } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
   countInsights, createBackupFile, createInsight, deleteCachedFile, deleteInsight, editInsight, getBetaMetrics, getDetail,
@@ -181,6 +180,18 @@ function ResurfaceApp() {
   const [captureContext, setCaptureContext] = useState("");
   const [captureImageUri, setCaptureImageUri] = useState<string | null>(null);
   const [ocrBusy, setOcrBusy] = useState(false);
+  const ocrAttempt = useRef(0);
+  const [saveStage, setSaveStage] = useState<PhotoSaveStage | "saving" | null>(null);
+  // Seconds since a photo save or text extraction started, shown once it is noticeably slow.
+  const [slowSeconds, setSlowSeconds] = useState(0);
+  const slowWork = ocrBusy || saveStage === "preparing" || saveStage === "encrypting";
+  useEffect(() => {
+    setSlowSeconds(0);
+    if (!slowWork) return;
+    const started = Date.now();
+    const timer = setInterval(() => setSlowSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [slowWork]);
   const [firstSave, setFirstSave] = useState(false);
   const [savedInsightId, setSavedInsightId] = useState<string | null>(null);
   const [reflectionText, setReflectionText] = useState("");
@@ -470,27 +481,44 @@ function ResurfaceApp() {
     if (source !== "write") void pickImage(source);
   };
 
+  const keepPhotoAsImage = () => setRoute("capture");
+
+  // Vision/ML Kit calls can't be cancelled, so Cancel abandons the attempt and its late result.
+  // Every outcome leaves the photo and anything already typed in the draft.
   const extractPhotoText = async () => {
-    if (!captureImageUri) return;
-    if (!isOcrSupported) { Alert.alert(t("ocr.unavailableTitle"), t("ocr.unavailableBody")); return; }
+    if (!captureImageUri || ocrBusy) return;
+    if (!isTextRecognitionSupported) { Alert.alert(t("ocr.unavailableTitle"), t("ocr.unavailableBody")); return; }
+    const attempt = ++ocrAttempt.current;
     setOcrBusy(true);
+    const retry = { text: t("ocr.retry"), onPress: () => { void extractPhotoText(); } };
+    const keep = { text: t("photo.keep"), onPress: keepPhotoAsImage };
     try {
-      const parts = await extractTextFromImage(captureImageUri);
-      const text = parts.join("\n").trim();
-      if (!text) { Alert.alert(t("ocr.failedTitle"), t("ocr.emptyBody")); return; }
-      setCaptureContent(text);
+      const text = await recognizeText(captureImageUri);
+      if (attempt !== ocrAttempt.current) return;
+      if (!text) { Alert.alert(t("ocr.failedTitle"), t("ocr.emptyBody"), [{ text: t("common.cancel"), style: "cancel" }, keep]); return; }
+      setCaptureContent((typed) => typed.trim() ? `${typed.trimEnd()}\n\n${text}` : text);
       setRoute("capture");
     } catch {
-      Alert.alert(t("ocr.failedTitle"), t("ocr.errorBody"));
-    } finally { setOcrBusy(false); }
+      if (attempt === ocrAttempt.current) Alert.alert(t("ocr.failedTitle"), t("ocr.errorBody"), [{ text: t("common.cancel"), style: "cancel" }, retry, keep]);
+    } finally { if (attempt === ocrAttempt.current) setOcrBusy(false); }
   };
+
+  const cancelPhotoText = () => { ocrAttempt.current += 1; setOcrBusy(false); };
 
   const saveCapture = async () => {
     if (!isValidInsight(captureContent, !!captureImageUri) || busy) return;
     setBusy(true);
+    setSaveStage(captureImageUri ? "preparing" : "saving");
     try {
       const wasFirst = (await countInsights()) === 0;
-      const insight = await createInsight(captureContent, captureContext, captureImageUri, captureCategoryIds, captureSource);
+      let insight: Insight;
+      try {
+        insight = await createInsight(captureContent, captureContext, captureImageUri, captureCategoryIds, captureSource, setSaveStage);
+      } catch {
+        // Nothing was stored (a prepared photo is removed), and the draft and original photo stay on screen.
+        Alert.alert(t("capture.saveFailedTitle"), t(captureImageUri ? "capture.saveFailedPhoto" : "capture.saveFailedBody"));
+        return;
+      }
       deletePickedImageFromCache(captureImageUri);
       setCaptureImageUri(null);
       setSavedInsightId(insight.id);
@@ -505,7 +533,7 @@ function ResurfaceApp() {
       try { await reconcileNotifications(await getSettings()); }
       catch (error) { report(error); }
     } catch (error) { report(error); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setSaveStage(null); }
   };
 
   const finishSave = async () => {
@@ -854,7 +882,8 @@ function ResurfaceApp() {
       <Text style={screenStyles.fieldLabel}>{t("category.field")} <Text style={screenStyles.optional}>{t("common.optional")}</Text></Text>
       <CategoryChips categories={categories} selected={captureCategoryIds} onToggle={(categoryId) => setCaptureCategoryIds((ids) => toggle(ids, categoryId))} onCreate={(name) => addCategory(name, (categoryId) => setCaptureCategoryIds((ids) => [...ids, categoryId]))} />
       <View style={screenStyles.row}><View style={screenStyles.flex}><Action kind="secondary" icon="camera-outline" label={t("choice.takePhoto")} onPress={() => { void pickImage("camera"); }} /></View><View style={screenStyles.flex}><Action kind="secondary" icon="images-outline" label={t("choice.choosePhoto")} onPress={() => { void pickImage("library"); }} /></View></View>
-      <View style={screenStyles.gap24}><Action label={busy ? t("capture.saving") : t("capture.save")} icon="bookmark-outline" disabled={busy || !isValidInsight(captureContent, !!captureImageUri)} onPress={() => { void saveCapture(); }} /></View>
+      <View style={screenStyles.gap24}><Action label={saveStage === "preparing" ? t("capture.preparingPhoto") : saveStage === "encrypting" ? t("capture.encryptingPhoto") : busy ? t("capture.saving") : t("capture.save")} icon="bookmark-outline" disabled={busy || !isValidInsight(captureContent, !!captureImageUri)} onPress={() => { void saveCapture(); }} /></View>
+      {saveStage && saveStage !== "saving" && slowSeconds >= 3 && <Text accessibilityLiveRegion="polite" style={screenStyles.slowNote}>{t("capture.photoSlow", { seconds: slowSeconds })}</Text>}
       <Text style={screenStyles.privacyNote}>{t("capture.privacy")}</Text>
     </Screen>}
 
@@ -863,9 +892,12 @@ function ResurfaceApp() {
       <Eyebrow>{t("photo.eyebrow")}</Eyebrow><Title>{t("photo.title")}</Title>
       {captureImageUri && <Image source={{ uri: captureImageUri }} resizeMode="contain" style={screenStyles.photoPreview} />}
       <Body muted>{t("photo.body")}</Body>
-      <View style={screenStyles.gap24}><Action label={t("photo.keep")} icon="image-outline" onPress={() => { setCaptureContent(""); setRoute("capture"); }} /></View>
+      <View style={screenStyles.gap24}><Action label={t("photo.keep")} icon="image-outline" disabled={ocrBusy} onPress={keepPhotoAsImage} /></View>
       <View style={screenStyles.gap12}><Action kind="secondary" label={ocrBusy ? t("photo.extracting") : t("photo.extract")} icon="text-outline" disabled={ocrBusy} onPress={() => { void extractPhotoText(); }} /></View>
-      <View style={screenStyles.gap12}><Action kind="ghost" label={t("photo.another")} onPress={() => { void pickImage("library"); }} /></View>
+      {ocrBusy && slowSeconds >= 3 && <Text accessibilityLiveRegion="polite" style={screenStyles.slowNote}>{t("photo.extractSlow", { seconds: slowSeconds })}</Text>}
+      <View style={screenStyles.gap12}>{ocrBusy
+        ? <Action kind="ghost" label={t("photo.stopExtracting")} onPress={cancelPhotoText} />
+        : <Action kind="ghost" label={t("photo.another")} onPress={() => { void pickImage("library"); }} />}</View>
     </Screen>}
 
     {route === "saved" && <Screen scroll={false}>
@@ -1113,6 +1145,7 @@ const screenStyles = StyleSheet.create({
   captureInput: { minHeight: 170, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.border, borderRadius: 22, padding: 18, color: palette.ink, fontSize: 18, lineHeight: 26 },
   contextInput: { minHeight: 96, backgroundColor: palette.paper, borderWidth: 1, borderColor: palette.border, borderRadius: 18, padding: 16, color: palette.ink, fontSize: 15, lineHeight: 23 },
   fieldLabel: { color: palette.ink, fontSize: 14, fontWeight: "700", marginTop: 24, marginBottom: 9 }, optional: { color: palette.muted, fontWeight: "400" },
+  slowNote: { marginTop: 8, color: palette.muted, fontSize: 13, textAlign: "center" },
   attached: { marginTop: 12, paddingLeft: 12, borderRadius: 14, backgroundColor: palette.soft, flexDirection: "row", alignItems: "center", gap: 8 }, attachedText: { color: palette.accentDark, fontSize: 13, fontWeight: "700", flex: 1 },
   privacyNote: { color: palette.muted, fontSize: 12, textAlign: "center", marginTop: 18 },
   photoPreview: { width: "100%", height: 300, backgroundColor: palette.soft, borderRadius: 20, marginVertical: 24 },

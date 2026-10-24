@@ -3,7 +3,9 @@ import { Directory, File, Paths } from "expo-file-system";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as SecureStore from "expo-secure-store";
 import { fromByteArray } from "base64-js";
+import { extractTextFromImage, isSupported as textExtractorSupported } from "expo-text-extractor";
 import { Image } from "react-native";
+import ResurfaceImage from "../modules/resurface-image";
 import { BACKUP_EXTENSION } from "./backup";
 
 export const IMAGE_KEY_NAME = "resurface.image-key.v1";
@@ -34,39 +36,64 @@ function imageDirectory(): Directory {
  * take many seconds and would make backups too large to hold in memory; 2048 px keeps text legible.
  */
 const MAX_PHOTO_EDGE = 2048;
+const JPEG_QUALITY = 0.82;
+const PREPARED_DIRECTORY = "PreparedPhoto";
+
+export type PhotoSaveStage = "preparing" | "encrypting";
 
 function imageSize(uri: string): Promise<{ width: number; height: number } | null> {
   return new Promise((resolve) => Image.getSize(uri, (width, height) => resolve({ width, height }), () => resolve(null)));
 }
 
-export async function encryptImageFromUri(uri: string, imageId: string): Promise<string> {
+/** An upright, downscaled JPEG copy in the app cache; the caller deletes it. */
+async function prepareJpeg(uri: string): Promise<string> {
+  if (ResurfaceImage) {
+    // iOS: ImageIO decodes HEIC/JPEG straight at the reduced size and applies orientation.
+    const directory = new Directory(Paths.cache, PREPARED_DIRECTORY);
+    directory.create({ idempotent: true, intermediates: true });
+    const target = new File(directory, `${randomUUID()}.jpg`);
+    await ResurfaceImage.downscaleToJpeg(uri, target.uri, MAX_PHOTO_EDGE, JPEG_QUALITY);
+    return target.uri;
+  }
   const size = await imageSize(uri);
   // Only ever shrink. Without a known size the photo is kept as it is rather than risk upscaling.
   const resize = size && Math.max(size.width, size.height) > MAX_PHOTO_EDGE
     ? (size.width >= size.height ? { width: MAX_PHOTO_EDGE } : { height: MAX_PHOTO_EDGE })
     : null;
   // SDK 57's contextual API (manipulateAsync is deprecated). On the iOS simulator, decoding a
-  // full-size library HEIC here took 13–115 s with either API; measure on a real device.
+  // full-size library HEIC here took 13–115 s with either API, hence the ImageIO path on iOS.
   const context = ImageManipulator.ImageManipulator.manipulate(uri);
-  let normalized: ImageManipulator.ImageResult;
   try {
     if (resize) context.resize(resize);
     const image = await context.renderAsync();
-    try { normalized = await image.saveAsync({ compress: 0.82, format: ImageManipulator.SaveFormat.JPEG }); }
+    try { return (await image.saveAsync({ compress: JPEG_QUALITY, format: ImageManipulator.SaveFormat.JPEG })).uri; }
     finally { image.release(); }
   } finally { context.release(); }
+}
+
+export async function encryptImageFromUri(uri: string, imageId: string, onStage?: (stage: PhotoSaveStage) => void): Promise<string> {
+  onStage?.("preparing");
+  const prepared = await prepareJpeg(uri);
   try {
-    const plaintext = await new File(normalized.uri).bytes();
+    onStage?.("encrypting");
+    const plaintext = await new File(prepared).bytes();
     const sealed = await aesEncryptAsync(plaintext, await imageKey());
     const target = new File(imageDirectory(), `${imageId}.enc`);
     target.create({ overwrite: true });
     target.write(await sealed.combined());
     return target.uri;
   } finally {
-    // ImageManipulator creates this temporary copy in the app's cache.
-    const temporary = new File(normalized.uri);
+    // The prepared copy is plaintext in the app's cache.
+    const temporary = new File(prepared);
     if (temporary.exists) temporary.delete();
   }
+}
+
+export const isTextRecognitionSupported = textExtractorSupported;
+
+/** Text visible in a photo, read on the device (Vision on iOS, ML Kit Latin on Android). */
+export async function recognizeText(uri: string): Promise<string> {
+  return (await extractTextFromImage(uri)).join("\n").trim();
 }
 
 /** Decrypted JPEG bytes, or null when the encrypted file is missing. Never write these to disk. */
@@ -182,7 +209,7 @@ export function clearShareContainerFiles(): void {
  * shares never survive a restart, so anything left there at launch is safe to remove.
  */
 export function clearTransientCaches(): void {
-  for (const name of ["ImagePicker", "ImageManipulator", "DocumentPicker", SHARED_DRAFT_DIRECTORY]) {
+  for (const name of ["ImagePicker", "ImageManipulator", "DocumentPicker", SHARED_DRAFT_DIRECTORY, PREPARED_DIRECTORY]) {
     try {
       const directory = new Directory(Paths.cache, name);
       if (directory.exists) directory.delete();

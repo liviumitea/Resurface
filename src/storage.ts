@@ -10,7 +10,7 @@ import {
 import type { Insight } from "./domain";
 import {
   IMAGE_DIRECTORY_NAME, IMAGE_KEY_NAME, deleteEncryptedImage, deleteUnreferencedImages, encryptImageFromUri,
-  readImageBytes, writeEncryptedImage,
+  readImageBytes, writeEncryptedImage, type PhotoSaveStage,
 } from "./media";
 import { MigrationError, runMigrations } from "./migrations";
 import { createStore } from "./store";
@@ -94,9 +94,12 @@ export const {
   clearFutureNotificationPlans, setNotificationPlan,
 } = store;
 
-export async function createInsight(content: string | null, context: string | null, imageUri: string | null, categoryIds: string[] = [], source: string | null = null): Promise<Insight> {
+export async function createInsight(
+  content: string | null, context: string | null, imageUri: string | null, categoryIds: string[] = [], source: string | null = null,
+  onPhotoStage?: (stage: PhotoSaveStage) => void,
+): Promise<Insight> {
   const insightId = id();
-  const imagePath = imageUri ? await encryptImageFromUri(imageUri, insightId) : null;
+  const imagePath = imageUri ? await encryptImageFromUri(imageUri, insightId, onPhotoStage) : null;
   try {
     return await store.insertInsight(insightId, content, context, imagePath, categoryIds, source);
   } catch (error) {

@@ -18,7 +18,7 @@ Resurface is a local-first iOS and Android beta for saving personal insights and
 
 ## Architecture and privacy
 
-This beta has no account, backend, or cloud sync. Insight text, reflection history, settings, and analytics live in a **SQLCipher-encrypted SQLite database**. Photos are normalized to JPEG and stored as **AES-GCM ciphertext** in app-private files. Random encryption keys are held in Expo SecureStore (iOS Keychain / Android Keystore). OCR runs on device using Apple Vision on iOS and ML Kit on Android. The app refuses to open the database if SQLCipher is unavailable, so **Expo Go is not supported**.
+This beta has no account, backend, or cloud sync. Insight text, reflection history, settings, and analytics live in a **SQLCipher-encrypted SQLite database**. Photos are downscaled to at most 2048 px, normalized to an upright JPEG without location metadata (on iOS by the local ImageIO module in `modules/resurface-image`, on Android by expo-image-manipulator), and stored as **AES-GCM ciphertext** in app-private files. Random encryption keys are held in Expo SecureStore (iOS Keychain / Android Keystore). OCR runs on device using Apple Vision on iOS and ML Kit on Android. The app refuses to open the database if SQLCipher is unavailable, so **Expo Go is not supported**.
 
 Personal content is not uploaded by this app. The image picker and image manipulator may create short-lived plaintext files in the app cache; the app removes the picker/manipulator copies it can identify after saving or discarding them. OS cache and backup behavior should be reviewed on physical devices before a wider launch.
 
@@ -66,7 +66,7 @@ npx expo export --platform android --output-dir /tmp/resurface-android-export
 ## Privacy and deletion review (23 October 2026, code review only)
 
 - **Personal content at rest:** text, reflections, history, settings and counters are in the SQLCipher database (deleted rows and the WAL stay encrypted); photos are AES-GCM ciphertext files. Both keys are in Keychain/Keystore via SecureStore.
-- **Plaintext copies:** the image picker, image manipulator and document picker write plaintext copies to `cache/ImagePicker`, `cache/ImageManipulator` and `cache/DocumentPicker`. The app deletes its copy after each save or cancel and clears those folders, plus any leftover backup file, on every launch. Copies the OS makes (photo library, iCloud Photos, Files) are outside the app and are not touched.
+- **Plaintext copies:** the image picker, image manipulator (Android), the iOS photo preparation module and the document picker write plaintext copies to `cache/ImagePicker`, `cache/ImageManipulator`, `cache/PreparedPhoto` and `cache/DocumentPicker`; a shared photo waits in `cache/SharedPhoto`. The app deletes its copy after each save or cancel and clears those folders, plus any leftover backup file, on every launch. Copies the OS makes (photo library, iCloud Photos, Files) are outside the app and are not touched.
 - **OCR:** runs on device and writes no files.
 - **Logs and counters:** the app logs nothing to the console. Counters are a fixed name plus a time, never content (enforced by `tests/metrics.test.ts`), and never leave the device.
 - **Notifications:** generic text by default. Each reconcile removes delivered notifications for insights that were already seen, paused, archived or deleted, and any that show insight text after that option is turned off.
