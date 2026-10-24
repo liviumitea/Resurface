@@ -17,22 +17,26 @@ Build Resurface into a safe, useful iOS/Android product: a person captures their
 
 Expo SDK 57 / React Native 0.86 / TypeScript, version 0.1.0.
 
-- `App.tsx` — navigation and screens, backup/restore panel (an in-screen overlay, not a native Modal), app-switcher `PrivacyCover`.
+- `App.tsx` — app state, navigation and the actions that change data (618 lines after the 24 October split).
+- `src/screens/` — screen components taking data and callbacks as props (`TodayScreens`, `CaptureScreens`, `LibraryScreens`, `DetailScreen`, `SettingsScreen`, `OnboardingScreen`), shared pieces and `PrivacyCover` (`components.tsx`), styles, and flow hooks: `useBackup` with the backup sheet (an in-screen overlay, not a native Modal), `useSharedContent` (share extension intake), `useLibrary` (filters that survive leaving Library).
+- `modules/resurface-image/` — local iOS-only Expo module: ImageIO photo preparation (2048 px, upright, no metadata). Android uses expo-image-manipulator.
 - `src/domain.ts` — models and pure rules: scheduling, notification planning, stale-notification dismissal.
 - `src/store.ts` — every persistence/lifecycle rule over an injected database, ID generator and clock (Expo-free, so tests run it directly).
 - `src/migrations.ts` — append-only schema migrations on `PRAGMA user_version` (SCRUM-53); `src/storage.ts` runs them on open. Schema 2 adds categories (SCRUM-56), and schema 3 adds source/favorite fields (SCRUM-42).
 - `src/storage.ts` — opens SQLCipher, owns keys, binds the store; backup file creation/restore; `StorageError` reasons; key-loss `setAsideUnreadableData()`.
 - `src/backup.ts` — versioned v1–v3 archives: scrypt (N=2^15, r=8, p=1) + AES-256-GCM via pinned `@noble/*` 2.4.0, header authenticated, strict validation. Newer archives carry categories and source/favorite fields while older archives remain readable.
-- `src/media.ts` — photo encryption, photo paths resolved by file name, launch-time cache sweep.
+- `src/media.ts` — photo preparation and encryption, text recognition wrapper, photo paths resolved by file name, launch-time cache sweep, shared-photo intake from the app-group container (never deletes hidden files there).
 - `src/i18n.ts` — English/Romanian UI strings, plural rules, locale dates; every user-visible string goes through `t()` (tests enforce matching keys/placeholders). Native permission strings live in `locales/*.json`.
 - `src/notifications.ts` — local reminder reconciliation. `src/ui.tsx`, `src/theme.ts` — components and palette.
-- `tests/` — `domain`, `storage-queries`, `lifecycle` (production store on node:sqlite, Europe/Bucharest DST clock), `backup`, `metrics`; shared `harness.ts`. 70 tests as of 24 October (also `migrations`, `categories`, `sources`, `i18n`).
+- `tests/` — `domain`, `storage-queries`, `lifecycle` (production store on node:sqlite, Europe/Bucharest DST clock), `backup`, `metrics`; shared `harness.ts`. 79 tests as of 24 October (also `migrations`, `categories`, `sources`, `i18n`, `reminders`). `tests/fixtures/ocr/` holds the EN/RO OCR fixture photos and results.
 - `scripts/prepare-ios.mjs` — works around Expo SDK 57 Xcode scripts mishandling the space in `Proiect Alexandra`.
+- `scripts/smoke-ios.sh` — read-only simulator smoke pass (needs AXe); `scripts/make-ocr-fixtures.swift` / `check-ocr-fixtures.swift` — OCR fixtures and their macOS Vision check.
+- `docs/PRIVACY.md`, `docs/SUPPORT.md`, `docs/STORE_PRIVACY.md` — draft privacy notice, help/recovery guide and store privacy answers (EN/RO); the support contact is still a placeholder.
 
 ## Decisions in force (do not silently change)
 
 - Scheduling: gaps 1, 3, 7, 14, 30, 60, 120 successive calendar days, 120 repeats; each gap starts when a card is actually shown; one pending event per active insight; Today oldest-overdue-first, stable per local day, cap 1/3/5; skipped items stay due; pause/archive cancel, resume/restore restart at stage 0. Snooze (1 week / 1 month / 3 months) replaces the pending event at the same stage and is not a response.
-- Notifications are local, generic by default, ≤30 planned, ≤1 per day; delivered ones are dismissed when their insight is seen/paused/archived/deleted or insight text is turned off.
+- Notifications are local, generic by default, ≤30 planned, ≤1 per day, skipping opt-in quiet weekdays (a device preference, not in backups); delivered ones are dismissed when their insight is seen/paused/archived/deleted or insight text is turned off.
 - Backup: password-protected, replace-only restore with an explicit warning; a forgotten backup password cannot be recovered. The password step is kept strong (~10 s under Hermes) and the UI says so.
 - Key loss: never reset silently. If the key is missing or the DB won't open, offer "Start fresh and restore a backup", which moves data and keys aside under a dated name (nothing deleted). Refused while the keychain is only locked. Onboarding offers "Restore from a backup".
 - Privacy: Android `allowBackup` off; picker/manipulator/document-picker caches and stray backup files cleared at launch; app-switcher cover on iOS (Android would need FLAG_SECURE). Counters are content-free.
@@ -40,7 +44,7 @@ Expo SDK 57 / React Native 0.86 / TypeScript, version 0.1.0.
 
 ## What has and has not been verified
 
-Automated: typecheck and 70 tests passed locally on 24 October; iOS/Android JS exports and CI native Android build passed in earlier checks but were not rerun for this handoff update.
+Automated: typecheck and 79 tests passed locally on 24 October (end of day); iOS/Android JS exports and CI native Android build passed in earlier checks but were not rerun for this handoff update.
 
 iOS 27 simulator (iPhone 18 Pro), Release build, 23 Oct 2026: Today/Library/Settings at normal and largest accessibility text; `+` chooser and text capture; create backup → share sheet with Save to Files → saved file decrypts on the Mac; wrong password refused; replace restore removed a newer insight and kept history; snooze moved the next date; app-switcher snapshot shows only the wordmark; after a simulator keychain reset the app refused to reset data, Start fresh moved everything aside, and restore from onboarding brought the insight back.
 
@@ -61,9 +65,19 @@ Backup fail-closed + restore limits; separate first-save and core-loop metrics; 
 
 The owner has chosen a feature-first phase and deferred physical-device testing for now. The next implementable work is Library/history polish (SCRUM-44), followed by a carefully scoped Share Sheet prototype (SCRUM-41), photo/OCR feedback (SCRUM-43), and optional reminder timing (SCRUM-40); see `PRODUCT_ROADMAP.md`. Device checks (SCRUM-31/35/38/52), signing/account access (SCRUM-47) and pilot evidence (SCRUM-45/46) remain release gates, not completed work. Share-into is experimental in SDK 57, so a prototype is not a shipping decision.
 
+## Implemented later on 24 October (Codex's feature-first roadmap)
+
+- SCRUM-41 share capture: text/links, then one photo (copied out of the app-group container, encrypted only on Save). Simulator-verified from Safari, Photos and Files. A bug that deleted the container's hidden iOS metadata file was found and fixed.
+- SCRUM-43/52 photo/OCR feedback: OCR appends instead of replacing typed text; stop/retry/keep-as-image; staged save progress; recoverable save failure. iOS photo preparation moved to the ImageIO module; a synthetic 12 MP HEIC saved in ~2 s on the simulator. That is not a device measurement and does not close SCRUM-52.
+- SCRUM-40 reminder timing: time presets and opt-in quiet days; DST and time-zone tests.
+- Roadmap step 5: `App.tsx` split into `src/screens/`, smoke script, tab accessibility labels fixed (Jira comment on SCRUM-47).
+- Roadmap step 6: privacy notice, support/recovery guide, store privacy answers, in-app Help & recovery section in Settings.
+
+Open owner decisions: the support contact; export-compliance answer; whether iOS keys should stay "this device only" (today they use the default Keychain accessibility, so an encrypted iPhone backup may carry them). See `docs/STORE_PRIVACY.md`.
+
 ## Suggested next steps
 
-Follow the ordered, feature-first steps and acceptance gates in `PRODUCT_ROADMAP.md`. Start with SCRUM-44 Library/history polish; categories, Romanian localization, source/favorites and backup checkup have already been implemented, so do not rebuild them or treat Jira's unchanged status as the code state. Keep automated, simulator, native-device and pilot evidence distinct in every update.
+The device-free roadmap steps 1–6 in `PRODUCT_ROADMAP.md` are implemented. What remains is gated on the owner: the decisions above, store/signing access (SCRUM-47), physical-device passes (SCRUM-31/35/38/52) and the pilot (SCRUM-45/46). Do not treat Jira's In Progress status as the code state; the comments carry the evidence. Keep automated, simulator, native-device and pilot evidence distinct in every update.
 
 Photo-performance context for the deferred SCRUM-52 gate: on the simulator, legacy `manipulateAsync` took 13–115 seconds for library HEIC and SDK 57's contextual image-manipulator render still took 88 seconds, while JPEG save and encrypt/write were fast. The simulator may overstate hardware latency. No physical-device measurement exists, and photo-containing restore in the native app remains unverified. Do not claim either is solved because the unit-test archive round trip passes.
 

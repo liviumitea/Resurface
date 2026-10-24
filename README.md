@@ -22,6 +22,8 @@ This beta has no account, backend, or cloud sync. Insight text, reflection histo
 
 Personal content is not uploaded by this app. The image picker and image manipulator may create short-lived plaintext files in the app cache; the app removes the picker/manipulator copies it can identify after saving or discarding them. OS cache and backup behavior should be reviewed on physical devices before a wider launch.
 
+The draft [privacy notice](docs/PRIVACY.md), [help and recovery guide](docs/SUPPORT.md) and [store privacy answers](docs/STORE_PRIVACY.md) describe this for users and reviewers; the support contact in them is still to be filled in.
+
 Password-protected backup and restore are implemented, but have not completed physical-device acceptance, particularly with photos. A backup password cannot be recovered. Uninstalling the app, losing the device or keys, or having an incomplete backup may permanently lose insights. Do not use this beta as the only copy of irreplaceable material. See the [roadmap](PRODUCT_ROADMAP.md) for the backup safety work required before wider distribution.
 
 ## Scheduling decisions
@@ -60,7 +62,7 @@ npx expo export --platform android --output-dir /tmp/resurface-android-export
 
 **Code layout.** `App.tsx` holds app state, navigation and the actions that change data. Each screen is a component in `src/screens/` that receives its data and callbacks as props (`TodayScreens`, `CaptureScreens`, `LibraryScreens`, `DetailScreen`, `SettingsScreen`, `OnboardingScreen`); self-contained flows are hooks there too (`useBackup` with the password sheet, `useSharedContent` for the share extension, `useLibrary` for Library filters). Persistence rules live in `src/store.ts`, scheduling and pure rules in `src/domain.ts`.
 
-**Simulator smoke test.** With a Release build installed on a booted iOS simulator whose onboarding is complete, `scripts/smoke-ios.sh [udid]` walks Today, each Library tab, Settings and the capture choice using the app's own translated labels, in whichever language it is set to. It is read-only: it never saves, deletes or changes settings. It needs [AXe](https://github.com/cameroncooke/AXe). System sheets (share, file picker) still need a person.
+**Simulator smoke test.** With a Release build installed on a booted iOS simulator whose onboarding is complete, `scripts/smoke-ios.sh [udid]` walks Today, each Library tab, Settings and the capture choice using the app's own translated labels, in whichever language it is set to. It is read-only: it never saves, deletes or changes settings. Status 24 October: with retries for taps dropped right after launch, three consecutive runs passed the same 13 of 15 steps; the restore-warning step was then changed to scroll until its button is visible and has not yet completed a run (the simulator's accessibility service hung). Treat a failure there as the script's until it has. It needs [AXe](https://github.com/cameroncooke/AXe). System sheets (share, file picker) still need a person.
 
 ## Data compatibility (schema and backups)
 

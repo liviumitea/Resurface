@@ -21,7 +21,7 @@ def walk(node):
     return any(walk(child) for child in node.get("children") or [])
 tree = json.load(sys.stdin)
 sys.exit(0 if any(walk(node) for node in (tree if isinstance(tree, list) else [tree])) else 1)' "$1"; }
-wait_for() { for _ in $(seq 1 40); do on_screen "$1" && return 0; sleep 0.25; done; return 1; }
+wait_for() { for _ in $(seq 1 "${2:-40}"); do on_screen "$1" && return 0; sleep 0.25; done; return 1; }
 
 PASSED=0; FAILED=0
 step() {
@@ -30,13 +30,27 @@ step() {
 }
 # Taps by translated label once the screen has settled; a tap during a transition can be lost.
 tap() { axe tap --label "$1" --wait-timeout 5 --pre-delay 0.6 --tap-style physical --udid "$UDID" >/dev/null 2>&1; }
-go() { tap "$(string "$1")" && wait_for "$(string "$2")"; }
+# Taps until the expected screen appears (at most three times). Right after launch the app is still
+# loading and planning reminders, and an early tap can be dropped.
+go_until() { for _ in 1 2 3; do tap "$1"; wait_for "$2" 16 && return 0; done; return 1; }
+go() { go_until "$(string "$1")" "$(string "$2")"; }
 # Only Today shows the brand as its header; its Settings button shares a label with the Settings title.
 TODAY_HEADER="resurface."
-go_today() { tap "$(string "$1")" && wait_for "$TODAY_HEADER"; }
+go_today() { go_until "$(string "$1")" "$TODAY_HEADER"; }
 scroll() { for _ in 1 2 3; do axe swipe --start-x 200 --start-y "$1" --end-x 200 --end-y "$2" --udid "$UDID" >/dev/null 2>&1; sleep 0.4; done; }
 # Shows the replace-everything warning and is then cancelled; no file is picked.
-restore_warning() { scroll 700 200; go settings.restoreBackup backup.replaceTitle; }
+# Scrolls in small steps until an element with this label is fully on screen (above the bottom edge).
+visible() { axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c '
+import json, sys
+want = sys.argv[1]
+def walk(node):
+    frame = node.get("frame") or {}
+    if (node.get("AXLabel") or "") == want and 100 <= frame.get("y", -1) <= 760: return True
+    return any(walk(child) for child in node.get("children") or [])
+tree = json.load(sys.stdin)
+sys.exit(0 if any(walk(node) for node in (tree if isinstance(tree, list) else [tree])) else 1)' "$1"; }
+scroll_to() { for _ in $(seq 1 12); do visible "$1" && return 0; axe swipe --start-x 200 --start-y 600 --end-x 200 --end-y 400 --udid "$UDID" >/dev/null 2>&1; sleep 0.4; done; return 1; }
+restore_warning() { scroll_to "$(string settings.restoreBackup)" && go settings.restoreBackup backup.replaceTitle; }
 
 xcrun simctl terminate "$UDID" "$BUNDLE" >/dev/null 2>&1 || true
 xcrun simctl launch "$UDID" "$BUNDLE" >/dev/null
