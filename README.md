@@ -58,6 +58,10 @@ npx expo export --platform ios --output-dir /tmp/resurface-ios-export
 npx expo export --platform android --output-dir /tmp/resurface-android-export
 ```
 
+**Code layout.** `App.tsx` holds app state, navigation and the actions that change data. Each screen is a component in `src/screens/` that receives its data and callbacks as props (`TodayScreens`, `CaptureScreens`, `LibraryScreens`, `DetailScreen`, `SettingsScreen`, `OnboardingScreen`); self-contained flows are hooks there too (`useBackup` with the password sheet, `useSharedContent` for the share extension, `useLibrary` for Library filters). Persistence rules live in `src/store.ts`, scheduling and pure rules in `src/domain.ts`.
+
+**Simulator smoke test.** With a Release build installed on a booted iOS simulator whose onboarding is complete, `scripts/smoke-ios.sh [udid]` walks Today, each Library tab, Settings and the capture choice using the app's own translated labels, in whichever language it is set to. It is read-only: it never saves, deletes or changes settings. It needs [AXe](https://github.com/cameroncooke/AXe). System sheets (share, file picker) still need a person.
+
 ## Data compatibility (schema and backups)
 
 - **Database schema** is versioned with SQLite `PRAGMA user_version` and upgraded by the ordered migrations in `src/migrations.ts` when the database opens. Version 1 is the 0.1.0 schema (that build stored version 0; migration 1 is idempotent so it upgrades in place). Each migration and its version bump commit in one transaction: a failure leaves the previous version readable and shows a non-destructive error; a database written by a newer app is refused, never modified. Never edit a released migration — append a new one, and add a fixture test that upgrades every released version (`tests/migrations.test.ts`).

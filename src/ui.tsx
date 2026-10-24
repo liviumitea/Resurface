@@ -70,14 +70,14 @@ export function BottomNav({ active, onToday, onCapture, onLibrary }: { active: "
   return (
     <SafeAreaView style={styles.navSafe} edges={["bottom"]}>
       <View style={styles.nav}>
-        <Pressable accessibilityRole="tab" accessibilityState={{ selected: active === "today" }} onPress={onToday} style={styles.navItem}>
+        <Pressable accessibilityRole="tab" accessibilityLabel={t("nav.today")} accessibilityState={{ selected: active === "today" }} onPress={onToday} style={styles.navItem}>
           <Ionicons name={active === "today" ? "sunny" : "sunny-outline"} size={23} color={active === "today" ? palette.accentDark : palette.muted} />
           <Text maxFontSizeMultiplier={1.4} style={[styles.navLabel, active === "today" && styles.navActive]}>{t("nav.today")}</Text>
         </Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel={t("nav.capture")} onPress={onCapture} style={styles.addButton}>
           <Ionicons name="add" size={28} color={palette.paper} />
         </Pressable>
-        <Pressable accessibilityRole="tab" accessibilityState={{ selected: active === "library" }} onPress={onLibrary} style={styles.navItem}>
+        <Pressable accessibilityRole="tab" accessibilityLabel={t("nav.library")} accessibilityState={{ selected: active === "library" }} onPress={onLibrary} style={styles.navItem}>
           <Ionicons name={active === "library" ? "albums" : "albums-outline"} size={23} color={active === "library" ? palette.accentDark : palette.muted} />
           <Text maxFontSizeMultiplier={1.4} style={[styles.navLabel, active === "library" && styles.navActive]}>{t("nav.library")}</Text>
         </Pressable>
