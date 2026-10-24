@@ -16,6 +16,8 @@ These are **planned enhancements beyond v0.2**, tracked under [SCRUM-58](https:/
 
 ### 1. Prove backup and restore with photos in the native app — first task
 
+Jira: [SCRUM-65](https://alexadima.atlassian.net/browse/SCRUM-65).
+
 The archive format is unit-tested, but a photo-containing backup has never been created and restored through the app's own file, crypto and UI code. Do it on the iOS simulator before features 4 and 5 change what a backup holds: create a backup with photos and the newer fields (categories, source, favorite), verify it, restore it, and confirm photos open and history is intact. Fix the smoke script's restore-warning step so it is a dependable regression check. Gate: one recorded simulator round trip with photos; the smoke script passes three consecutive runs.
 
 ### 2. Find anything in Library

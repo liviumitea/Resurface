@@ -18,6 +18,8 @@ import {
   type Settings,
   type TodayItem,
   normalizeQuietDays,
+  matchesSearch,
+  type LibraryStatus,
 } from "./domain";
 import type { BackupContents, BackupSummary } from "./backup";
 import {
@@ -168,14 +170,16 @@ export function createStore({ db, id, now }: StoreDependencies) {
     return (await db().getFirstAsync<{ count: number }>("SELECT count(*) AS count FROM insights"))?.count ?? 0;
   }
 
-  async function listInsights(status: InsightStatus, search = "", categoryId: string | null = null, favoritesOnly = false, sort: LibrarySort = "newest"): Promise<LibraryItem[]> {
-    const normalized = search.trim().toLowerCase();
-    const where = ["status = ?"];
-    const params: (string | number | null)[] = [status];
-    if (normalized) {
-      const escaped = normalized.replace(/[\\%_]/g, "\\$&");
-      where.push("(lower(content) LIKE ? ESCAPE '\\' OR lower(context) LIKE ? ESCAPE '\\' OR lower(source) LIKE ? ESCAPE '\\')");
-      params.push(`%${escaped}%`, `%${escaped}%`, `%${escaped}%`);
+  /**
+   * Library rows. Search runs in JavaScript rather than SQL: SQLite's lower() folds only ASCII, so
+   * "învață" never matched "Învață". Matching ignores case and accents across text, context and source.
+   */
+  async function listInsights(status: LibraryStatus, search = "", categoryId: string | null = null, favoritesOnly = false, sort: LibrarySort = "newest"): Promise<LibraryItem[]> {
+    const where = ["1 = 1"];
+    const params: (string | number | null)[] = [];
+    if (status !== "all") {
+      where.push("status = ?");
+      params.push(status);
     }
     if (categoryId) {
       where.push("id IN (SELECT insightId FROM insight_categories WHERE categoryId = ?)");
@@ -185,13 +189,14 @@ export function createStore({ db, id, now }: StoreDependencies) {
     const order = sort === "oldest" ? "createdAt ASC, id ASC"
       : sort === "resurfaced" ? "lastShownAt IS NULL, lastShownAt DESC, createdAt DESC, id ASC"
       : "createdAt DESC, id ASC";
-    return db().getAllAsync<LibraryItem>(
+    const rows = await db().getAllAsync<LibraryItem>(
       `SELECT insights.*,
         (SELECT count(*) FROM events WHERE events.insightId = insights.id AND events.shownAt IS NOT NULL) AS timesShown,
         (SELECT max(shownAt) FROM events WHERE events.insightId = insights.id) AS lastShownAt
        FROM insights WHERE ${where.join(" AND ")} ORDER BY ${order}`,
       ...params,
     );
+    return search.trim() ? rows.filter((row) => matchesSearch([row.content, row.context, row.source], search)) : rows;
   }
 
   async function listCategories(): Promise<CategoryWithCount[]> {

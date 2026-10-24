@@ -56,7 +56,7 @@ Out of scope until evidence changes the decision: generated advice, automatic in
 | --- | --- | --- |
 | [SCRUM-59](https://alexadima.atlassian.net/browse/SCRUM-59) | Recover interrupted text and metadata drafts | Restart, Resume/Discard/Save, encrypted persistence; no insight, metric or reminder before Save. |
 | [SCRUM-60](https://alexadima.atlassian.net/browse/SCRUM-60) | Encrypt draft photos and resolve incoming-share conflicts | Recoverable photo, explicit conflict choice, no orphaned or plaintext copies. |
-| [SCRUM-61](https://alexadima.atlassian.net/browse/SCRUM-61) | Search all Library statuses | Active/Paused/Archived results with badges and composable filters; correct after lifecycle changes. |
+| [SCRUM-61](https://alexadima.atlassian.net/browse/SCRUM-61) | Search all Library statuses | Active/Paused/Archived results with badges and composable filters; correct after lifecycle changes. *Implemented 24 Oct: All tab with status labels; search moved from SQL `lower() LIKE` (ASCII-only, missed "Învață") to case/diacritic-insensitive matching in the store; 3 tests; 5,000 insights searched in 24 ms on node:sqlite (device SQLCipher unmeasured); checked on the iOS simulator.* |
 | [SCRUM-62](https://alexadima.atlassian.net/browse/SCRUM-62) | Maintain notes on past reflections | Add/edit/remove notes while preserving responses, event counts and next due dates. |
 | [SCRUM-63](https://alexadima.atlassian.net/browse/SCRUM-63) | Manage a saved insight photo | Accessible viewer, attach/replace/remove, explicit OCR, atomic file/reference changes. |
 | [SCRUM-64](https://alexadima.atlassian.net/browse/SCRUM-64) | Show Upcoming in-app dates | Match the production schedule; distinguish due dates from approximate notification delivery. |

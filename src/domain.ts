@@ -38,6 +38,25 @@ export type TodayItem = { insight: Insight; event: ResurfaceEvent };
 export type LibrarySort = "newest" | "oldest" | "resurfaced";
 /** A Library row: the insight plus how often and when it last resurfaced. */
 export type LibraryItem = Insight & { timesShown: number; lastShownAt: string | null };
+/** A Library tab: one lifecycle status, or every insight. */
+export type LibraryStatus = InsightStatus | "all";
+
+// Romanian letters spelled out, in case the platform lacks Unicode normalization; both the comma
+// (ș ț) and the older cedilla (ş ţ) forms are folded.
+const FOLD: Record<string, string> = { "ă": "a", "â": "a", "î": "i", "ș": "s", "ş": "s", "ț": "t", "ţ": "t" };
+
+/** Lowercase text without accents, so "invata", "învață" and "ÎNVAȚĂ" compare equal. */
+export function searchKey(text: string): string {
+  const lower = text.toLowerCase();
+  const decomposed = typeof lower.normalize === "function" ? lower.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : lower;
+  return decomposed.replace(/[ăâîșşțţ]/g, (letter) => FOLD[letter] ?? letter);
+}
+
+/** True when the query (ignoring case and accents) appears in any of the fields. An empty query matches. */
+export function matchesSearch(fields: readonly (string | null)[], query: string): boolean {
+  const key = searchKey(query.trim());
+  return !key || fields.some((field) => !!field && searchKey(field).includes(key));
+}
 export type Reflection = {
   id: string;
   insightId: string;

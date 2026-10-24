@@ -70,7 +70,7 @@ step "launch shows Today" test -n "$LANGUAGE"
 [ -n "$LANGUAGE" ] || { echo "Today never appeared; is onboarding complete?"; exit 1; }
 
 step "Library opens" go nav.library library.title
-for status in paused archived active; do
+for status in all paused archived active; do
   step "Library tab: $status" tap "$(string "library.status.$status")"
 done
 step "Library still shown" wait_for "$(string library.title)"

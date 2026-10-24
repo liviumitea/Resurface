@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { MAX_CATEGORY_NAME_LENGTH, type CategoryWithCount, type InsightStatus, type LibraryItem, type LibrarySort } from "../domain";
+import { MAX_CATEGORY_NAME_LENGTH, type CategoryWithCount, type LibraryItem, type LibrarySort, type LibraryStatus } from "../domain";
 import { formatDate, t, type MessageKey } from "../i18n";
 import { listInsights } from "../storage";
 import { palette } from "../theme";
@@ -15,7 +15,7 @@ import { screenStyles } from "./styles";
  * failure replaces it with a retryable message rather than an alert over stale results.
  */
 export function useLibrary(visible: boolean) {
-  const [status, setStatus] = useState<InsightStatus>("active");
+  const [status, setStatus] = useState<LibraryStatus>("active");
   const [search, setSearch] = useState("");
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [sort, setSort] = useState<LibrarySort>("newest");
@@ -56,7 +56,7 @@ export function LibraryScreen({ library, categories, onOpenDetail, onManageCateg
     <Header title={t("library.header")} />
     <ScrollView contentContainerStyle={screenStyles.libraryList} keyboardShouldPersistTaps="handled">
     <View><Eyebrow>{t("library.eyebrow")}</Eyebrow><Title>{t("library.title")}</Title><TextInput placeholder={t("library.search")} placeholderTextColor={palette.muted} value={librarySearch} onChangeText={setLibrarySearch} style={screenStyles.search} accessibilityLabel={t("library.searchLabel")} /></View>
-    <View style={screenStyles.filters}>{(["active", "paused", "archived"] as InsightStatus[]).map((status) => <Pressable key={status} accessibilityRole="tab" accessibilityState={{ selected: libraryStatus === status }} onPress={() => setLibraryStatus(status)} style={[screenStyles.filter, libraryStatus === status && screenStyles.selectedFilter]}><Text style={[screenStyles.filterText, libraryStatus === status && screenStyles.selectedFilterText]}>{t(`library.status.${status}` as MessageKey)}</Text></Pressable>)}</View>
+    <View style={screenStyles.filters}>{(["all", "active", "paused", "archived"] as LibraryStatus[]).map((status) => <Pressable key={status} accessibilityRole="tab" accessibilityState={{ selected: libraryStatus === status }} onPress={() => setLibraryStatus(status)} style={[screenStyles.filter, libraryStatus === status && screenStyles.selectedFilter]}><Text style={[screenStyles.filterText, libraryStatus === status && screenStyles.selectedFilterText]}>{t(`library.status.${status}` as MessageKey)}</Text></Pressable>)}</View>
     <View style={[screenStyles.chipWrap, screenStyles.favoritesRow]}>
       <Pressable accessibilityRole="switch" accessibilityState={{ checked: favoritesOnly }} accessibilityLabel={t("library.favoritesLabel")} onPress={() => setFavoritesOnly((value) => !value)} style={[screenStyles.filter, favoritesOnly && screenStyles.selectedFilter]}>
         <Text style={[screenStyles.filterText, favoritesOnly && screenStyles.selectedFilterText]}>{t("library.favorites")}</Text>
@@ -80,7 +80,7 @@ export function LibraryScreen({ library, categories, onOpenDetail, onManageCateg
     {!libraryError && libraryItems.length > 0 && <Text style={screenStyles.resultCount} accessibilityRole="summary">{t("library.resultCount", { count: libraryItems.length })}</Text>}
       {libraryError ? <Surface style={screenStyles.emptyCard}><Ionicons name="cloud-offline-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{t("library.errorTitle")}</Text><Body muted>{t("library.errorBody")}</Body><View style={screenStyles.gap24}><Action label={t("common.tryAgain")} icon="refresh" onPress={library.retry} /></View></Surface>
         : libraryItems.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="albums-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{librarySearch ? t("library.noMatches") : favoritesOnly ? t("library.emptyFavorites") : libraryCategory ? t(`library.emptyInCategory.${libraryStatus}` as MessageKey) : t(`library.empty.${libraryStatus}` as MessageKey)}</Text><Body muted>{t("library.emptyBody")}</Body></Surface>
-        : libraryItems.map((insight) => <Pressable key={insight.id} accessibilityRole="button" onPress={() => onOpenDetail(insight.id)} style={screenStyles.libraryRow}>{insight.imagePath ? <Thumbnail path={insight.imagePath} /> : <View style={screenStyles.libraryIcon}><Ionicons name="bookmark-outline" size={19} color={palette.accentDark} /></View>}<View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{insight.content || t("common.savedPhoto")}</Text><Text style={screenStyles.libraryDate}>{formatDate(insight.createdAt)}{insight.source ? ` · ${insight.source}` : ""}</Text><Text style={screenStyles.libraryDate}>{insight.lastShownAt ? t("library.seenTimes", { count: insight.timesShown, date: formatDate(insight.lastShownAt) }) : t("library.notSeenYet")}</Text></View>{!!insight.favorite && <Ionicons name="star" size={16} color={palette.accentDark} accessibilityLabel={t("library.favoriteMark")} />}<Ionicons name="chevron-forward" size={17} color={palette.muted} /></Pressable>)}
+        : libraryItems.map((insight) => <Pressable key={insight.id} accessibilityRole="button" onPress={() => onOpenDetail(insight.id)} style={screenStyles.libraryRow}>{insight.imagePath ? <Thumbnail path={insight.imagePath} /> : <View style={screenStyles.libraryIcon}><Ionicons name="bookmark-outline" size={19} color={palette.accentDark} /></View>}<View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{insight.content || t("common.savedPhoto")}</Text><Text style={screenStyles.libraryDate}>{libraryStatus === "all" ? `${t(`detail.status.${insight.status}` as MessageKey)} · ` : ""}{formatDate(insight.createdAt)}{insight.source ? ` · ${insight.source}` : ""}</Text><Text style={screenStyles.libraryDate}>{insight.lastShownAt ? t("library.seenTimes", { count: insight.timesShown, date: formatDate(insight.lastShownAt) }) : t("library.notSeenYet")}</Text></View>{!!insight.favorite && <Ionicons name="star" size={16} color={palette.accentDark} accessibilityLabel={t("library.favoriteMark")} />}<Ionicons name="chevron-forward" size={17} color={palette.muted} /></Pressable>)}
     </ScrollView>
     <BottomNav active="library" onToday={onToday} onCapture={onCaptureChoice} onLibrary={onLibrary} />
   </Screen>;
