@@ -1,49 +1,61 @@
-# Resurface — current review and feature-first roadmap
+# Resurface — private-build product roadmap
 
-Reviewed 24 October 2026 against repository `main` through `af5b31c`, [Product Spec v0.2](https://alexadima.atlassian.net/wiki/spaces/~5ff74facd364960139d5a2ee/pages/688150/Product+Spec+v0.2), and the [SCRUM board](https://alexadima.atlassian.net/jira/software/projects/SCRUM/boards/1?filter=&groupBy=none). This is the working plan; [PRODUCT_BACKLOG.md](PRODUCT_BACKLOG.md) has issue-level acceptance gates and [CLAUDE_HANDOFF.md](CLAUDE_HANDOFF.md) has implementation notes.
+Reviewed 24 October 2026 against repository `main` through `23714fd`, the [Product Spec v0.2](https://alexadima.atlassian.net/wiki/spaces/~5ff74facd364960139d5a2ee/pages/688150/Product+Spec+v0.2), and the current [handoff](CLAUDE_HANDOFF.md). The owner does **not** want to publish yet. This plan is for making the app more complete and useful in private builds; it is not a store-submission checklist. The [backlog](PRODUCT_BACKLOG.md) retains existing Jira acceptance gates.
 
-## Current position
+## What exists now
 
-Resurface is a local-first Expo/React Native beta with no account, backend, or cloud sync. The core loop is implemented: first-save onboarding; text, photo and on-device OCR capture; Today and reflections; Library, insight detail/history and lifecycle controls; snooze and local reminders. Data is held in SQLCipher and encrypted photo files. Password-protected export, replace-only restore, a truthful backup checkup, and read-only backup verification are implemented.
+The device-only app covers the spec's capture → resurface → reflect loop: first-save onboarding; text, photo, OCR and incoming Share Sheet capture; Today, same-day revisit and reflection; a searchable Library with categories, source, favorites, sorting and photo thumbnails; insight lifecycle/history and snooze; local reminders with a preferred time and quiet weekdays; English/Romanian UI; SQLCipher data, AES-GCM photos, versioned encrypted backups, restore and a backup checkup. Screen components and flow hooks have been extracted from `App.tsx`. Draft privacy, help/recovery and store-privacy documents exist.
 
-The 24 October feature wave added append-only database migrations (schema 3), same-day revisit/reflection, optional multiple categories, English/Romanian localization, optional sources and favorites, and compatible Expo SDK 57 dependency patches. Category data uses backup archive v2; source/favorite data uses v3; older v1/v2 archives still restore. TypeScript and **70 automated tests passed locally on 24 October**. The iOS 27 simulator Release build has been used for targeted checks of the new features. CI runs iOS/Android JavaScript exports and an Android native debug build, but that is not Android runtime acceptance.
+TypeScript and **79 automated tests passed locally on 24 October**. The tests cover scheduling, migrations, archive compatibility, categories, source/favorites, sharing payloads, localization and reminder rules. Individual flows were checked on an iOS 27 simulator Release build. This is implementation evidence, not proof of physical-device behavior. No backend or account is needed for the present product direction.
 
-This is **not yet a public-release claim**. No physical-device pass is recorded. Android runtime, photo-containing restore in the native app, notification delivery/deep links, OCR quality, screen-reader use, signed distribution, and pilot value remain unverified. Jira still shows many implemented stories as To Do or In Progress; comments and code provide more precise implementation evidence than status alone.
+The previous feature-first roadmap's steps 1–6 have code implementations. Do not rebuild Library polish, incoming sharing, photo/OCR feedback, reminder controls, screen extraction or draft help/privacy documentation as if they were still missing. Some acceptance remains open: the iOS smoke script has an unproven restore-warning step, native photo-containing restore is not accepted, and Android runtime, OS notification delivery, screen-reader use and real-device performance are unverified.
 
-## Decision for this work phase
+## Next feature pack — recommended order
 
-For now, prioritize feature depth and usability without making physical-device testing the immediate next task. Simulator, automated and build checks can support development; they cannot replace the deferred release gate. Do not mark a Jira issue Done if its acceptance criteria still require device or pilot evidence. Keep the product focused on a person's own insights returning over time: no generated advice, social feed, streaks, mood tracking, or backend by default.
+These are **planned enhancements beyond v0.2**, tracked under [SCRUM-58](https://alexadima.atlassian.net/browse/SCRUM-58). They are not implemented yet. Keep the simple core path usable after every slice. Each feature should include English/Romanian copy, accessibility labels, store/domain tests and backup/migration coverage where data changes.
 
-## Next implementation steps
+### 1. Prove backup and restore with photos in the native app — first task
 
-### 1. Make Library and history genuinely useful — next task
+The archive format is unit-tested, but a photo-containing backup has never been created and restored through the app's own file, crypto and UI code. Do it on the iOS simulator before features 4 and 5 change what a backup holds: create a backup with photos and the newer fields (categories, source, favorite), verify it, restore it, and confirm photos open and history is intact. Fix the smoke script's restore-warning step so it is a dependable regression check. Gate: one recorded simulator round trip with photos; the smoke script passes three consecutive runs.
 
-Extend [SCRUM-44](https://alexadima.atlassian.net/browse/SCRUM-44) rather than creating another retrieval ticket. The current Library already has status, category and favorite filters plus text/source search, but rows are text-led with only an image icon and a created date. Add useful sort choices (newest saved, oldest saved, recently resurfaced), encrypted-photo previews or a safe fallback, clearer filter/result counts and empty states, and a history view that makes each exposure, response and note easy to scan. Keep filters composable, preserve the current lifecycle semantics, and test ordering, large collections and missing-image behavior. Gate: the user can find an old insight and understand its history quickly in both languages; no plaintext thumbnail is persisted.
+### 2. Find anything in Library
 
-### 2. Reduce capture friction
+Jira: [SCRUM-61](https://alexadima.atlassian.net/browse/SCRUM-61).
 
-Prototype [SCRUM-41](https://alexadima.atlassian.net/browse/SCRUM-41) in two slices: shared text/links first, then images. Incoming content must open an editable draft, require an explicit Save, and leave no insight or stray plaintext file on cancel. Test cold/warm launch, duplicate intents and permission/failure paths in available simulators/emulators; retain a native-device acceptance item because SDK 57's [incoming sharing is experimental on iOS](https://docs.expo.dev/versions/v57.0.0/sdk/sharing/). If that API proves too brittle, keep manual capture as the reliable path and document the decision.
+The current search only runs inside the selected Active, Paused or Archived tab. Add an **All insights** view with a visible status badge and filters that continue to compose with category, favorite, source and sort. Filter state already survives opening a detail and returning (since the screen extraction); keep it that way. Test realistic large libraries; add pagination and consider an encrypted SQLite full-text index only if measured search latency warrants it. Expo SDK 57 supports [FTS and SQLCipher configuration](https://docs.expo.dev/versions/v57.0.0/sdk/sqlite/), but the current `LIKE` query may be sufficient. Also fix a confirmed search bug: SQLite's `lower()` folds only ASCII, so searching "învață" misses "Învață…" and "știința" misses "Știința…". Match case- and diacritic-insensitively (so "invata" also finds "învață", useful on keyboards without Romanian letters), for example with a normalized search column kept in sync by the store. Gate: a user can find a known insight without first guessing its lifecycle status or typing exact diacritics, and search results remain correct after edits, archive, restore and migration.
 
-### 3. Improve photo/OCR feedback without guessing at hardware performance
+### 3. Make the next return understandable
 
-Use [SCRUM-43](https://alexadima.atlassian.net/browse/SCRUM-43) and [SCRUM-52](https://alexadima.atlassian.net/browse/SCRUM-52). Create a small English/Romanian OCR fixture set (rotated, low-light, text-heavy, no readable text) and exercise editable result, retry, keep-as-image and cancellation. Make decode/OCR/save progress and recoverable failures clear in the UI. Record simulator timings separately; do not declare the HEIC bottleneck fixed or set a device latency target until hardware is measured. Gate for this phase: every fixture has a usable outcome and no failure discards the draft or original photo.
+Jira: [SCRUM-64](https://alexadima.atlassian.net/browse/SCRUM-64).
 
-### 4. Add simple, user-controlled reminder timing
+Detail shows one next-resurfacing date, but there is no overview. Add a small **Upcoming** section showing the next few active insights and their *in-app due dates*, with a clear distinction from approximate notification delivery and quiet weekdays. Link to the insight's detail and existing snooze controls; do not add streaks or force an extra exposure. Gate: it matches the production schedule through pause/archive/snooze, time-zone changes and an empty queue, without leaking insight text on the lock screen.
 
-Refine [SCRUM-40](https://alexadima.atlassian.net/browse/SCRUM-40) as an opt-in extension: a preferred reminder time or quiet window, with the existing simple default intact. Show that Today works when notifications are off. Test local-day, daylight-saving, time-zone and queue reconciliation rules against the production store; avoid promising exact operating-system delivery. Defer adaptive schedules until pilot evidence asks for them.
+### 4. Make reflections maintainable
 
-### 5. Make the growing app easier to change and review
+Jira: [SCRUM-62](https://alexadima.atlassian.net/browse/SCRUM-62).
 
-`App.tsx` now owns most navigation, screens and async flows in one large component. Extract focused screen/flow components and state helpers without changing behavior, keeping storage and scheduling rules in their existing tested modules. Add repeatable simulator smoke scenarios for first save, Library/filter/history, category/source edits, backup verification and restore warnings. Keep English/Romanian strings and accessibility labels in step with every UI change. Gate: typecheck, domain/store/backup tests, JS exports and the available native build remain green, and the same simulator scenarios still work.
+History displays a response and optional note, but an older note cannot currently be corrected or added later. Let the user add, edit or remove a note attached to an exposure from Insight Detail; show when a note was edited. Keep the original event/response and scheduling history unchanged—changing a past `Yes`/`Not now`/`Not anymore` would have different lifecycle consequences and is out of scope for this slice. Recording an edit time needs a new reflections column: append schema migration 4 and a backup archive version that carries it, with older archives still restoring (the pattern used for categories and sources). Gate: note changes survive restart and encrypted backup/restore, never count as another exposure or answer, and do not alter the next due date.
 
-### 6. Prepare release operations while features are built
+### 5. Let saved photos be managed safely
 
-Update user-facing copy, recovery guidance, privacy disclosures and support contact; keep roadmap, README, handoff and Jira aligned with what is implemented versus accepted. [SCRUM-47](https://alexadima.atlassian.net/browse/SCRUM-47) covers signing and TestFlight/Play internal builds when account access is available. Continue compatible dependency review under [SCRUM-48](https://alexadima.atlassian.net/browse/SCRUM-48); do not force a framework downgrade to silence build-tool advisories.
+Jira: [SCRUM-63](https://alexadima.atlassian.net/browse/SCRUM-63).
 
-## Deferred gates before calling it a complete release
+Insight editing can change text/context/source/categories but not the attached image. Add a full-screen accessible photo viewer and the ability to attach, replace, or remove one photo on an existing insight. Offer OCR again as an explicit action, never silently overwrite edited text. Stage and encrypt a replacement before switching the database reference; delete the old encrypted file only after the update succeeds. Do not allow removal when it would leave a photo-only insight empty. Gate: no orphaned files or broken backup references after failure, cancellation, replacement or deletion.
 
-1. [SCRUM-31](https://alexadima.atlassian.net/browse/SCRUM-31), [SCRUM-35](https://alexadima.atlassian.net/browse/SCRUM-35), [SCRUM-38](https://alexadima.atlassian.net/browse/SCRUM-38) and [SCRUM-52](https://alexadima.atlassian.net/browse/SCRUM-52): physical iPhone and Android passes for the full core loop, photo backup/restore, encrypted update and key-loss behavior, notification delivery/deep links, OCR, accessibility and photo-save latency. Record devices, OS versions, steps and outcomes.
-2. Signed internal builds and install/update/rollback checks; privacy/store metadata and a tested support/recovery path. A simulator build is not a substitute.
-3. [SCRUM-45](https://alexadima.atlassian.net/browse/SCRUM-45) and [SCRUM-46](https://alexadima.atlassian.net/browse/SCRUM-46): a small target-persona pilot with first-save/core-loop measures and interviews, followed by a written go/no-go decision. Do not infer user benefit from taps alone.
+### 6. Recover interrupted capture drafts
 
-Cross-device accounts and end-to-end encrypted sync remain conditional [discovery](https://alexadima.atlassian.net/browse/SCRUM-49) and [implementation](https://alexadima.atlassian.net/browse/SCRUM-50), not prerequisites for this device-only v1.
+Jira: [SCRUM-59](https://alexadima.atlassian.net/browse/SCRUM-59) text/metadata recovery, then [SCRUM-60](https://alexadima.atlassian.net/browse/SCRUM-60) encrypted draft photos and share conflicts.
+
+Today, the capture form and incoming share draft live in memory; leaving the flow or an app interruption can lose work. Add an encrypted draft that survives app restart without becoming a saved insight or scheduling a resurface. Start with text/context/source/categories only and ship that; then, if still wanted, handle a draft photo as encrypted app-private data and clear its plaintext picker/share copies. Show **Resume draft / Discard draft** and avoid silently replacing one draft with incoming shared content. Gate: restart, interruption, cancel, Save and share-over-existing-draft cases neither lose an accepted draft nor leave orphaned plaintext/photo files; draft data is excluded from insight metrics and reminders.
+
+## Consolidation after each slice
+
+Jira: [SCRUM-65](https://alexadima.atlassian.net/browse/SCRUM-65) regression and simulator evidence; [SCRUM-66](https://alexadima.atlassian.net/browse/SCRUM-66) English/Romanian product, privacy, recovery, backup and handoff documentation. Start their checks and copy work alongside each feature, then close them after the full pack is verified.
+
+- Repeat typecheck, unit/store/backup tests and iOS/Android JavaScript exports. Run the available iOS simulator smoke path and fix its restore-warning step before treating it as a reliable regression check. Add an Android emulator smoke path if a runtime is available; a CI native build alone does not exercise the UI.
+- Complete a native **simulator** backup/restore round trip containing photos and the new fields. The pure archive test already passes; this verifies the app's file, crypto and UI glue without claiming physical-device acceptance.
+- Review privacy and deletion whenever a feature adds persistent drafts, notes, photos or share-container data. No personal content should be sent to telemetry or a server.
+
+## Not in this phase
+
+No store publication, signing project, release date or public-beta claim is requested. Physical-device acceptance, signed distribution and pilot evidence remain later gates if the owner decides to distribute. Account/cloud sync, AI-generated advice, social features, streaks and adaptive resurfacing are not needed to make this private device-only app comprehensive. Possible later experiments—multiple photos, widgets, bulk Library actions or end-to-end encrypted sync—should follow use of the completed core, not displace the five items above.

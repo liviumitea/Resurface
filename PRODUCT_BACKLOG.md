@@ -48,6 +48,21 @@ Jira epics: [core loop](https://alexadima.atlassian.net/browse/SCRUM-23), [data 
 
 Out of scope until evidence changes the decision: generated advice, automatic insight extraction/tagging, social features, streaks, goals, mood tracking, and adaptive schedules.
 
+## Epic 7 — Private-build product completeness (planned, 24 October 2026)
+
+[SCRUM-58](https://alexadima.atlassian.net/browse/SCRUM-58) tracks the next feature pack beyond Product Spec v0.2. The Epic and eight child tickets are **To Do**; none is implemented yet. The recommended order and feature gates are in [PRODUCT_ROADMAP.md](PRODUCT_ROADMAP.md). This phase does not include store publication or physical-device acceptance.
+
+| Jira | Planned work | Acceptance focus |
+| --- | --- | --- |
+| [SCRUM-59](https://alexadima.atlassian.net/browse/SCRUM-59) | Recover interrupted text and metadata drafts | Restart, Resume/Discard/Save, encrypted persistence; no insight, metric or reminder before Save. |
+| [SCRUM-60](https://alexadima.atlassian.net/browse/SCRUM-60) | Encrypt draft photos and resolve incoming-share conflicts | Recoverable photo, explicit conflict choice, no orphaned or plaintext copies. |
+| [SCRUM-61](https://alexadima.atlassian.net/browse/SCRUM-61) | Search all Library statuses | Active/Paused/Archived results with badges and composable filters; correct after lifecycle changes. |
+| [SCRUM-62](https://alexadima.atlassian.net/browse/SCRUM-62) | Maintain notes on past reflections | Add/edit/remove notes while preserving responses, event counts and next due dates. |
+| [SCRUM-63](https://alexadima.atlassian.net/browse/SCRUM-63) | Manage a saved insight photo | Accessible viewer, attach/replace/remove, explicit OCR, atomic file/reference changes. |
+| [SCRUM-64](https://alexadima.atlassian.net/browse/SCRUM-64) | Show Upcoming in-app dates | Match the production schedule; distinguish due dates from approximate notification delivery. |
+| [SCRUM-65](https://alexadima.atlassian.net/browse/SCRUM-65) | Extend private-build regression checks | Automated and simulator checks, including native photo backup/restore and restore warning. |
+| [SCRUM-66](https://alexadima.atlassian.net/browse/SCRUM-66) | Document the feature pack | English/Romanian behavior, privacy, recovery and backup compatibility; maintain README/roadmap/backlog/handoff. |
+
 ## Additional reviewed work (24 October 2026)
 
 After reviewing the latest code and avoiding duplicates in SCRUM-29–51, six more tickets were approved and created: [SCRUM-52](https://alexadima.atlassian.net/browse/SCRUM-52) real-device photo-save performance (P0; deferred release gate), [SCRUM-53](https://alexadima.atlassian.net/browse/SCRUM-53) rollback-safe schema migrations (P0; implemented 24 Oct), [SCRUM-54](https://alexadima.atlassian.net/browse/SCRUM-54) same-day revisit/reflection (P1; implemented 24 Oct — "Seen today" section, lifecycle test, iOS simulator check), [SCRUM-55](https://alexadima.atlassian.net/browse/SCRUM-55) backup checkup (P1; implemented 24 Oct — created vs verified status, read-only verification, tests, iOS simulator check), [SCRUM-56](https://alexadima.atlassian.net/browse/SCRUM-56) multiple categories (P1; implemented 24 Oct — schema 2, v2 backups, tests, iOS simulator check), and [SCRUM-57](https://alexadima.atlassian.net/browse/SCRUM-57) Romanian localization (P1; implemented 24 Oct — English/Romanian UI, plurals, dates, notifications, permission prompts, language setting, tests, iOS simulator check). Their acceptance criteria and epic parents are in Jira and summarized in `PRODUCT_ROADMAP.md`. SCRUM-53 was implemented before SCRUM-56. The owner has now chosen feature/usability work first; P0 device and pilot evidence remain release gates, not prerequisites to continue building.
