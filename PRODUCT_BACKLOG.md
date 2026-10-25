@@ -50,7 +50,7 @@ Out of scope until evidence changes the decision: generated advice, automatic in
 
 ## Epic 7 — Private-build product completeness (planned, 24 October 2026)
 
-[SCRUM-58](https://alexadima.atlassian.net/browse/SCRUM-58) tracks the next feature pack beyond Product Spec v0.2. The Epic and eight child tickets are **To Do**; none is implemented yet. The recommended order and feature gates are in [PRODUCT_ROADMAP.md](PRODUCT_ROADMAP.md). This phase does not include store publication or physical-device acceptance.
+[SCRUM-58](https://alexadima.atlassian.net/browse/SCRUM-58) tracks the next feature pack beyond Product Spec v0.2. SCRUM-61 is implemented and In Progress in Jira; SCRUM-65's simulator gates (restore-warning smoke step and a native photo backup/restore round trip) are verified; it stays open as the regression track for later slices. The other children remain To Do. The recommended order and feature gates are in [PRODUCT_ROADMAP.md](PRODUCT_ROADMAP.md). This phase does not include store publication or physical-device acceptance.
 
 | Jira | Planned work | Acceptance focus |
 | --- | --- | --- |
@@ -60,7 +60,7 @@ Out of scope until evidence changes the decision: generated advice, automatic in
 | [SCRUM-62](https://alexadima.atlassian.net/browse/SCRUM-62) | Maintain notes on past reflections | Add/edit/remove notes while preserving responses, event counts and next due dates. |
 | [SCRUM-63](https://alexadima.atlassian.net/browse/SCRUM-63) | Manage a saved insight photo | Accessible viewer, attach/replace/remove, explicit OCR, atomic file/reference changes. |
 | [SCRUM-64](https://alexadima.atlassian.net/browse/SCRUM-64) | Show Upcoming in-app dates | Match the production schedule; distinguish due dates from approximate notification delivery. |
-| [SCRUM-65](https://alexadima.atlassian.net/browse/SCRUM-65) | Extend private-build regression checks | Automated and simulator checks, including native photo backup/restore and restore warning. |
+| [SCRUM-65](https://alexadima.atlassian.net/browse/SCRUM-65) | Extend private-build regression checks | Automated and simulator checks, including native photo backup/restore. *Restore warning and All tab passed in three consecutive 16/16 iOS smoke runs. A native iOS simulator backup/restore with 6 photos, categories, source and favorite passed on 25 October; photos byte-identical after restore. Typecheck and 82 tests passed again during this review.* |
 | [SCRUM-66](https://alexadima.atlassian.net/browse/SCRUM-66) | Document the feature pack | English/Romanian behavior, privacy, recovery and backup compatibility; maintain README/roadmap/backlog/handoff. |
 
 ## Additional reviewed work (24 October 2026)

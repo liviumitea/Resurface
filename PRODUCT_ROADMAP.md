@@ -1,30 +1,30 @@
 # Resurface — private-build product roadmap
 
-Reviewed 24 October 2026 against repository `main` through `23714fd`, the [Product Spec v0.2](https://alexadima.atlassian.net/wiki/spaces/~5ff74facd364960139d5a2ee/pages/688150/Product+Spec+v0.2), and the current [handoff](CLAUDE_HANDOFF.md). The owner does **not** want to publish yet. This plan is for making the app more complete and useful in private builds; it is not a store-submission checklist. The [backlog](PRODUCT_BACKLOG.md) retains existing Jira acceptance gates.
+Reviewed 24 October 2026 against repository `main` through `0b56eb5`, the [Product Spec v0.2](https://alexadima.atlassian.net/wiki/spaces/~5ff74facd364960139d5a2ee/pages/688150/Product+Spec+v0.2), and the current [handoff](CLAUDE_HANDOFF.md). The owner does **not** want to publish yet. This plan is for making the app more complete and useful in private builds; it is not a store-submission checklist. The [backlog](PRODUCT_BACKLOG.md) retains existing Jira acceptance gates.
 
 ## What exists now
 
 The device-only app covers the spec's capture → resurface → reflect loop: first-save onboarding; text, photo, OCR and incoming Share Sheet capture; Today, same-day revisit and reflection; a searchable Library with categories, source, favorites, sorting and photo thumbnails; insight lifecycle/history and snooze; local reminders with a preferred time and quiet weekdays; English/Romanian UI; SQLCipher data, AES-GCM photos, versioned encrypted backups, restore and a backup checkup. Screen components and flow hooks have been extracted from `App.tsx`. Draft privacy, help/recovery and store-privacy documents exist.
 
-TypeScript and **79 automated tests passed locally on 24 October**. The tests cover scheduling, migrations, archive compatibility, categories, source/favorites, sharing payloads, localization and reminder rules. Individual flows were checked on an iOS 27 simulator Release build. This is implementation evidence, not proof of physical-device behavior. No backend or account is needed for the present product direction.
+TypeScript and **82 automated tests passed locally on 24 October**. The tests cover scheduling, migrations, archive compatibility, categories, source/favorites, sharing payloads, localization, reminder rules and All-insights search. Individual flows were checked on an iOS 27 simulator Release build. This is implementation evidence, not proof of physical-device behavior. No backend or account is needed for the present product direction.
 
-The previous feature-first roadmap's steps 1–6 have code implementations. Do not rebuild Library polish, incoming sharing, photo/OCR feedback, reminder controls, screen extraction or draft help/privacy documentation as if they were still missing. Some acceptance remains open: the iOS smoke script has an unproven restore-warning step, native photo-containing restore is not accepted, and Android runtime, OS notification delivery, screen-reader use and real-device performance are unverified.
+The previous feature-first roadmap's steps 1–6 have code implementations. Do not rebuild Library polish, incoming sharing, photo/OCR feedback, reminder controls, screen extraction or draft help/privacy documentation as if they were still missing. The All-insights Library feature and its accent-insensitive search are now implemented. The iOS smoke script's restore-warning step passed in three complete runs, and a native simulator backup/restore with photos passed on 25 October. Android runtime, OS notification delivery, screen-reader use and real-device performance are also unverified.
 
 ## Next feature pack — recommended order
 
-These are **planned enhancements beyond v0.2**, tracked under [SCRUM-58](https://alexadima.atlassian.net/browse/SCRUM-58). They are not implemented yet. Keep the simple core path usable after every slice. Each feature should include English/Romanian copy, accessibility labels, store/domain tests and backup/migration coverage where data changes.
+These enhancements beyond v0.2 are tracked under [SCRUM-58](https://alexadima.atlassian.net/browse/SCRUM-58). SCRUM-61 is implemented and SCRUM-65's simulator gates are verified; the other features remain planned. Keep the simple core path usable after every slice. Each feature should include English/Romanian copy, accessibility labels, store/domain tests and backup/migration coverage where data changes.
 
-### 1. Prove backup and restore with photos in the native app — first task
+### 1. Prove backup and restore with photos in the native app — done on the simulator
 
 Jira: [SCRUM-65](https://alexadima.atlassian.net/browse/SCRUM-65).
 
-The archive format is unit-tested, but a photo-containing backup has never been created and restored through the app's own file, crypto and UI code. Do it on the iOS simulator before features 4 and 5 change what a backup holds: create a backup with photos and the newer fields (categories, source, favorite), verify it, restore it, and confirm photos open and history is intact. Fix the smoke script's restore-warning step so it is a dependable regression check. Gate: one recorded simulator round trip with photos; the smoke script passes three consecutive runs.
+Done on 25 October 2026 on the iOS 27 simulator (Release build): a backup with 8 insights, 6 photos, categories, a source and a favorite was created, saved to Files, picked and restored. Photos, history and the newer fields matched, and a second backup taken after the restore contained byte-identical photos. The smoke script's restore warning passed three consecutive runs. Physical-device restore is still unverified.
 
-### 2. Find anything in Library
+### 2. Find anything in Library — implemented
 
 Jira: [SCRUM-61](https://alexadima.atlassian.net/browse/SCRUM-61).
 
-The current search only runs inside the selected Active, Paused or Archived tab. Add an **All insights** view with a visible status badge and filters that continue to compose with category, favorite, source and sort. Filter state already survives opening a detail and returning (since the screen extraction); keep it that way. Test realistic large libraries; add pagination and consider an encrypted SQLite full-text index only if measured search latency warrants it. Expo SDK 57 supports [FTS and SQLCipher configuration](https://docs.expo.dev/versions/v57.0.0/sdk/sqlite/), but the current `LIKE` query may be sufficient. Also fix a confirmed search bug: SQLite's `lower()` folds only ASCII, so searching "învață" misses "Învață…" and "știința" misses "Știința…". Match case- and diacritic-insensitively (so "invata" also finds "învață", useful on keyboards without Romanian letters), for example with a normalized search column kept in sync by the store. Gate: a user can find a known insight without first guessing its lifecycle status or typing exact diacritics, and search results remain correct after edits, archive, restore and migration.
+Commit `0b56eb5` adds an **All insights** tab, status labels, and search across content, context and source that ignores case and accents, including Romanian comma/cedilla forms. Category, favorite and sort controls still compose; filter state survives detail navigation. Three new tests cover mixed statuses, lifecycle edits and a 5,000-insight query (25 ms on this run's node:sqlite). The iOS simulator flow and three complete smoke runs were recorded with the commit. Device SQLCipher latency and physical-device acceptance remain unmeasured; revisit indexing or pagination only if a measured native library is slow. Do not rebuild this feature as a new task.
 
 ### 3. Make the next return understandable
 
@@ -54,10 +54,10 @@ Today, the capture form and incoming share draft live in memory; leaving the flo
 
 Jira: [SCRUM-65](https://alexadima.atlassian.net/browse/SCRUM-65) regression and simulator evidence; [SCRUM-66](https://alexadima.atlassian.net/browse/SCRUM-66) English/Romanian product, privacy, recovery, backup and handoff documentation. Start their checks and copy work alongside each feature, then close them after the full pack is verified.
 
-- Repeat typecheck, unit/store/backup tests and iOS/Android JavaScript exports. Run the available iOS simulator smoke path and fix its restore-warning step before treating it as a reliable regression check. Add an Android emulator smoke path if a runtime is available; a CI native build alone does not exercise the UI.
-- Complete a native **simulator** backup/restore round trip containing photos and the new fields. The pure archive test already passes; this verifies the app's file, crypto and UI glue without claiming physical-device acceptance.
+- Repeat typecheck, unit/store/backup tests and iOS/Android JavaScript exports. Run the available iOS simulator smoke path; its restore-warning step now passes, but system share and file-picker sheets still need manual checks. Add an Android emulator smoke path if a runtime is available; a CI native build alone does not exercise the UI.
+- Repeat the native **simulator** backup/restore round trip with photos after each slice that changes what a backup holds (reflection notes, saved-photo editing). It passed on 25 October before those changes.
 - Review privacy and deletion whenever a feature adds persistent drafts, notes, photos or share-container data. No personal content should be sent to telemetry or a server.
 
 ## Not in this phase
 
-No store publication, signing project, release date or public-beta claim is requested. Physical-device acceptance, signed distribution and pilot evidence remain later gates if the owner decides to distribute. Account/cloud sync, AI-generated advice, social features, streaks and adaptive resurfacing are not needed to make this private device-only app comprehensive. Possible later experiments—multiple photos, widgets, bulk Library actions or end-to-end encrypted sync—should follow use of the completed core, not displace the five items above.
+No store publication, signing project, release date or public-beta claim is requested. Physical-device acceptance, signed distribution and pilot evidence remain later gates if the owner decides to distribute. Account/cloud sync, AI-generated advice, social features, streaks and adaptive resurfacing are not needed to make this private device-only app comprehensive. Possible later experiments—multiple photos, widgets, bulk Library actions or end-to-end encrypted sync—should follow use of the remaining core work above.
