@@ -47,6 +47,8 @@ choose to make one without them.
 Check that notifications for Resurface are allowed in the phone's settings and that the day is not one of
 your quiet days. Times are approximate and the phone decides exactly when to deliver them. Today always shows
 what is due, with or without reminders. Open the app now and then: it schedules up to 30 reminders ahead.
+To see when each active insight comes back, tap "See what's coming up" at the bottom of Today. Those are the
+days the insights become due in Today; reminders may come a little later, never more than one a day.
 
 ## Deleting everything
 
@@ -75,4 +77,6 @@ merge și ai un backup, **Începe de la zero și restaurează un backup** mută 
 deschide aplicația goală ca să restaurezi fișierul.
 
 **Mementourile nu sosesc.** Verifică permisiunea pentru notificări și zilele fără mementouri. Orele sunt
-aproximative. Azi arată mereu ce e de revăzut, cu sau fără mementouri.
+aproximative. Azi arată mereu ce e de revăzut, cu sau fără mementouri. Ca să vezi când revine fiecare idee
+activă, apasă „Vezi ce urmează” în partea de jos a paginii Azi: acolo sunt zilele în care ideile devin scadente
+în Azi; mementourile pot veni puțin mai târziu, cel mult unul pe zi.

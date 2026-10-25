@@ -5,7 +5,7 @@ const keys = [
   "today.settings", "nav.today", "nav.capture", "nav.library", "library.title",
   "library.status.all", "library.status.active", "library.status.paused", "library.status.archived", "settings.title",
   "common.back", "choice.title", "common.cancel", "category.manage", "category.screenTitle",
-  "settings.restoreBackup", "backup.replaceTitle",
+  "settings.restoreBackup", "backup.replaceTitle", "today.upcoming", "upcoming.title",
 ] as const satisfies readonly MessageKey[];
 
 const table = Object.fromEntries((["en", "ro"] as const).map((language) => [language, Object.fromEntries(keys.map((key) => [key, t(key, {}, language)]))]));

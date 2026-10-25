@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Read-only smoke pass over the main screens on a booted iOS simulator with a Release build installed.
-# It navigates Today, Library (each status tab, Manage categories), Settings (up to the restore
+# It navigates Today, Library (each status tab, Manage categories), Upcoming, Settings (up to the restore
 # warning, which it cancels) and the capture choice, and never saves, deletes or changes anything. Requires AXe (https://github.com/cameroncooke/AXe) and Node 24.
 #   scripts/smoke-ios.sh [simulator-udid]
 # Onboarding must already be complete on that simulator.
@@ -50,6 +50,16 @@ def walk(node):
 tree = json.load(sys.stdin)
 sys.exit(0 if any(walk(node) for node in (tree if isinstance(tree, list) else [tree])) else 1)' "$1"; }
 scroll_to() { for _ in $(seq 1 12); do visible "$1" && return 0; axe swipe --start-x 200 --start-y 600 --end-x 200 --end-y 400 --udid "$UDID" >/dev/null 2>&1; sleep 0.4; done; return 1; }
+# Today's link to Upcoming sits below the cards, so it may need scrolling first.
+upcoming() { scroll_to "$(string today.upcoming)" && go today.upcoming upcoming.title; }
+# A tap can be reported as done yet lost, so Cancel counts only once the warning has gone.
+cancel_warning() {
+  for _ in 1 2 3; do
+    tap "$(string common.cancel)"
+    for _ in $(seq 1 12); do on_screen "$(string backup.replaceTitle)" || return 0; sleep 0.25; done
+  done
+  return 1
+}
 restore_warning() { scroll_to "$(string settings.restoreBackup)" && go settings.restoreBackup backup.replaceTitle; }
 
 xcrun simctl terminate "$UDID" "$BUNDLE" >/dev/null 2>&1 || true
@@ -77,9 +87,11 @@ step "Library still shown" wait_for "$(string library.title)"
 step "Manage categories opens" go category.manage category.screenTitle
 step "categories back to Library" go common.back library.title
 step "back to Today" go_today nav.today
+step "Upcoming opens" upcoming
+step "Upcoming back to Today" go_today common.back
 step "Settings opens" go today.settings settings.title
 step "restore warns before replacing" restore_warning
-step "restore warning cancels" tap "$(string common.cancel)"
+step "restore warning cancels" cancel_warning
 scroll 200 700
 step "Settings back to Today" go_today common.back
 step "capture choice opens" go nav.capture choice.title

@@ -85,6 +85,15 @@ export const SELECT_TODAY_DUE_SQL = `
   ORDER BY events.scheduledAt ASC, events.id ASC LIMIT ?
 `;
 
+/** Pending events of active insights that are not already in today's selection, soonest first. */
+const UPCOMING_WHERE = `
+  FROM events JOIN insights ON insights.id = events.insightId
+  WHERE insights.status = 'active' AND events.shownAt IS NULL AND events.cancelledAt IS NULL
+    AND (events.selectedDay IS NULL OR events.selectedDay <> ?)
+`;
+export const SELECT_UPCOMING_SQL = `SELECT events.* ${UPCOMING_WHERE} ORDER BY events.scheduledAt ASC, events.id ASC LIMIT ?`;
+export const COUNT_UPCOMING_SQL = `SELECT count(*) AS count ${UPCOMING_WHERE}`;
+
 export const SELECT_NOTIFICATION_CANDIDATES_SQL = `
   SELECT events.*, insights.content AS content FROM events JOIN insights ON insights.id = events.insightId
   WHERE insights.status = 'active' AND events.shownAt IS NULL AND events.cancelledAt IS NULL

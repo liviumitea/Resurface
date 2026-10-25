@@ -2,7 +2,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, View } from "react-native";
+import { Alert, AppState, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { MAX_CATEGORY_NAME_LENGTH, addCalendarDays, isValidInsight, shouldAskValueFeedback, type CategoryWithCount, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
 import { resolveLanguage, setLanguage, t, type MessageKey } from "./src/i18n";
@@ -12,8 +12,9 @@ import {
   countInsights, createInsight, deleteInsight, editInsight, getBetaMetrics, getDetail, getEvent, getInsight, getSettings, getShownCount,
   markCompleted, markValueFeedbackAsked, markOpened, markShown, openStorage, respondToEvent, setAsideUnreadableData, snoozeInsight, StorageError,
   CategoryError, createCategory, deleteCategory, listCategories, renameCategory, setFavorite, setInsightCategories,
-  type BetaMetrics, type StorageFailure, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
+  type BetaMetrics, type StorageFailure, listUpcoming, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
 } from "./src/storage";
+import type { UpcomingList } from "./src/store";
 import { Action, Body, Eyebrow, Screen, Title } from "./src/ui";
 import { BackupSheet, useBackup } from "./src/screens/backup";
 import { CaptureChoiceScreen, CaptureScreen, PermissionScreen, PhotoScreen, SavedScreen } from "./src/screens/CaptureScreens";
@@ -24,8 +25,8 @@ import { OnboardingScreen } from "./src/screens/OnboardingScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
 import { useSharedContent } from "./src/screens/share";
 import { screenStyles } from "./src/screens/styles";
-import { FeedbackModal, ReflectScreen, TodayScreen } from "./src/screens/TodayScreens";
-import type { CaptureOrigin, Route, TodayStatus } from "./src/screens/types";
+import { FeedbackModal, ReflectScreen, TodayScreen, UpcomingScreen } from "./src/screens/TodayScreens";
+import type { CaptureOrigin, DetailOrigin, Route, TodayStatus } from "./src/screens/types";
 
 // Until settings load (or if they can't), follow the device language.
 setLanguage(resolveLanguage("system"));
@@ -51,7 +52,9 @@ function ResurfaceApp() {
   const [editSource, setEditSource] = useState("");
   const [editCategoryIds, setEditCategoryIds] = useState<string[]>([]);
   const [detail, setDetail] = useState<InsightDetail | null>(null);
-  const [detailOrigin, setDetailOrigin] = useState<"today" | "library">("library");
+  const [detailOrigin, setDetailOrigin] = useState<DetailOrigin>("library");
+  const [upcomingStatus, setUpcomingStatus] = useState<TodayStatus>("loading");
+  const [upcomingList, setUpcomingList] = useState<UpcomingList | null>(null);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [editContext, setEditContext] = useState("");
@@ -114,10 +117,20 @@ function ResurfaceApp() {
 
   const goLibrary = useCallback(() => setRoute("library"), []);
 
+  const goUpcoming = useCallback(async () => {
+    setUpcomingStatus("loading");
+    setRoute("upcoming");
+    void Notifications.getPermissionsAsync().then((permission) => setNotificationGranted(permission.granted)).catch(() => undefined);
+    try {
+      setUpcomingList(await listUpcoming());
+      setUpcomingStatus("ready");
+    } catch { setUpcomingStatus("error"); }
+  }, []);
+
   const backup = useBackup({ report, setSettings, goToday });
   const { backupStatus, openBackupSheet, chooseRestoreFile, pickBackupFile, refreshBackupStatus } = backup;
 
-  const openDetail = useCallback(async (insightId: string, origin: "today" | "library" = "library") => {
+  const openDetail = useCallback(async (insightId: string, origin: DetailOrigin = "library") => {
     const found = await getDetail(insightId);
     if (!found) { await goToday(); return; }
     setDetail(found);
@@ -188,6 +201,15 @@ function ResurfaceApp() {
   // A share opens a capture draft; refs give the share hook the current route and draft.
   const routeRef = useRef(route);
   routeRef.current = route;
+
+  // Upcoming labels are relative to the local day and time zone, which may have changed while the
+  // app was in the background.
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active" && routeRef.current === "upcoming") void goUpcoming();
+    });
+    return () => subscription.remove();
+  }, [goUpcoming]);
   const draftRef = useRef({ content: "", imageUri: null as string | null });
   draftRef.current = { content: captureContent, imageUri: captureImageUri };
   useSharedContent({
@@ -473,7 +495,7 @@ function ResurfaceApp() {
           try {
             await deleteInsight(insightId);
             if (settings) await reconcileNotifications(settings);
-            if (detailOrigin === "library") goLibrary(); else await goToday();
+            if (detailOrigin === "library") goLibrary(); else if (detailOrigin === "upcoming") await goUpcoming(); else await goToday();
           } catch (error) { report(error); }
         })();
       } },
@@ -532,6 +554,7 @@ function ResurfaceApp() {
 
   const leaveDetail = () => {
     if (detailOrigin === "library") goLibrary();
+    else if (detailOrigin === "upcoming") void goUpcoming();
     else if (firstSave && !settings.permissionAsked) setRoute("permission");
     else void goToday();
   };
@@ -583,7 +606,10 @@ function ResurfaceApp() {
       onSettings={openSettings} onRetry={() => { void goToday(); }} onCapture={() => beginCapture("today")}
       onCaptureChoice={() => openCaptureChoice("today")} onLibrary={goLibrary} onToday={() => { void goToday(); }}
       onReflect={() => startReflection(null)} onRevisit={startReflection} onNext={() => { void advanceToday(); }}
-      onOpenDetail={(insightId) => { void openDetail(insightId, "today"); }} />}
+      onOpenDetail={(insightId) => { void openDetail(insightId, "today"); }} onUpcoming={() => { void goUpcoming(); }} />}
+
+    {route === "upcoming" && settings && <UpcomingScreen status={upcomingStatus} list={upcomingList} settings={settings} remindersOn={notificationGranted}
+      onOpenDetail={(insightId) => { void openDetail(insightId, "upcoming"); }} onRetry={() => { void goUpcoming(); }} onBack={() => { void goToday(); }} />}
 
     {route === "reflect" && reflectTarget && <ReflectScreen target={reflectTarget} revisit={!!revisitEventId} note={reflectionText} setNote={setReflectionText}
       onAnswer={(response) => { void finishReflection(response); }} onBack={() => { setRevisitEventId(null); setRoute("today"); }} />}

@@ -114,6 +114,21 @@ export function dueForStage(from: Date, stage: number): string {
   return addCalendarDays(from, gap ?? 120).toISOString();
 }
 
+/**
+ * When a pending insight can next appear in Today, by the local calendar. "due" means it is already
+ * due but Today's daily cap left no room for it yet.
+ */
+export type UpcomingTiming = { kind: "due" } | { kind: "later_today" } | { kind: "tomorrow" } | { kind: "date"; at: string };
+
+export function upcomingTiming(scheduledAt: string, clock: Date): UpcomingTiming {
+  const due = new Date(scheduledAt);
+  if (due.getTime() <= clock.getTime()) return { kind: "due" };
+  const day = localDay(due);
+  if (day === localDay(clock)) return { kind: "later_today" };
+  if (day === localDay(addCalendarDays(clock, 1))) return { kind: "tomorrow" };
+  return { kind: "date", at: scheduledAt };
+}
+
 export function isValidInsight(content: string | null, hasImage: boolean): boolean {
   return Boolean(content?.trim()) || hasImage;
 }

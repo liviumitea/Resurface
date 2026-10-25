@@ -23,7 +23,7 @@ import {
 } from "./domain";
 import type { BackupContents, BackupSummary } from "./backup";
 import {
-  SELECT_NOTIFICATION_CANDIDATES_SQL, SELECT_TODAY_DUE_SQL, SELECT_TODAY_EXISTING_SQL,
+  COUNT_UPCOMING_SQL, SELECT_NOTIFICATION_CANDIDATES_SQL, SELECT_TODAY_DUE_SQL, SELECT_TODAY_EXISTING_SQL, SELECT_UPCOMING_SQL,
 } from "./storage-queries";
 
 type BindValue = string | number | null;
@@ -43,6 +43,8 @@ export type StoreDependencies = {
 };
 
 export type NotificationCandidate = ResurfaceEvent & { content: string | null };
+/** The next insights to come back, soonest first, and how many are pending in all. */
+export type UpcomingList = { items: TodayItem[]; total: number };
 
 function cleanSource(source: string | null): string | null {
   const trimmed = source?.trim().replace(/\s+/g, " ") ?? "";
@@ -295,6 +297,22 @@ export function createStore({ db, id, now }: StoreDependencies) {
     return items;
   }
 
+  /**
+   * What comes back next: each active insight's pending event, except those already in today's
+   * selection (they are on Today). Read-only, so looking never counts as a resurfacing.
+   */
+  async function listUpcoming(clock = now(), limit = 20): Promise<UpcomingList> {
+    const day = localDay(clock);
+    const events = await db().getAllAsync<ResurfaceEvent>(SELECT_UPCOMING_SQL, day, limit);
+    const total = (await db().getFirstAsync<{ count: number }>(COUNT_UPCOMING_SQL, day))?.count ?? 0;
+    const items: TodayItem[] = [];
+    for (const event of events) {
+      const insight = await getInsight(event.insightId);
+      if (insight) items.push({ insight, event });
+    }
+    return { items, total };
+  }
+
   async function markShown(eventId: string, clock = now()): Promise<void> {
     await db().withTransactionAsync(async () => {
       const event = await getEvent(eventId);
@@ -519,7 +537,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
     exportRows, replaceAllRows, recordBackupVerified, getBackupStatus,
     listCategories, createCategory, renameCategory, deleteCategory, setInsightCategories, setFavorite,
     track, getSettings, saveSettings, insertInsight, countInsights, listInsights, getInsight, getEvent,
-    getDetail, selectToday, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus, snoozeInsight,
+    getDetail, selectToday, listUpcoming, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus, snoozeInsight,
     editInsight, deleteInsightRow, markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics,
     notificationCandidates, clearFutureNotificationPlans, setNotificationPlan,
   };

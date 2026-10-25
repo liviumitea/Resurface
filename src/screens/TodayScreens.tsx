@@ -1,14 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import type { TodayItem } from "../domain";
-import { formatLongDay, t } from "../i18n";
+import { upcomingTiming, type Settings, type TodayItem } from "../domain";
+import { formatDate, formatLongDay, t, weekdayName } from "../i18n";
+import type { UpcomingList } from "../store";
 import { palette } from "../theme";
 import { Action, Body, BottomNav, Eyebrow, Header, IconButton, Screen, Surface, Title } from "../ui";
-import { InsightCard, TodaySkeleton } from "./components";
+import { InsightCard, Thumbnail, TodaySkeleton } from "./components";
 import { screenStyles } from "./styles";
 import type { TodayStatus } from "./types";
 
-export function TodayScreen({ status, items, index, insightCount, onSettings, onRetry, onCapture, onCaptureChoice, onLibrary, onToday, onReflect, onRevisit, onNext, onOpenDetail }: {
+export function TodayScreen({ status, items, index, insightCount, onSettings, onRetry, onCapture, onCaptureChoice, onLibrary, onToday, onReflect, onRevisit, onNext, onOpenDetail, onUpcoming }: {
   status: TodayStatus;
   items: TodayItem[];
   index: number;
@@ -25,6 +26,7 @@ export function TodayScreen({ status, items, index, insightCount, onSettings, on
   onRevisit: (eventId: string) => void;
   onNext: () => void;
   onOpenDetail: (insightId: string) => void;
+  onUpcoming: () => void;
 }) {
   const current = items[index];
   // Cards already shown today (except the one on screen), so the user can go back and reflect.
@@ -61,6 +63,7 @@ export function TodayScreen({ status, items, index, insightCount, onSettings, on
           </Pressable>;
         })}
       </View>}
+      {status === "ready" && insightCount > 0 && <Pressable accessibilityRole="button" onPress={onUpcoming}><Text style={screenStyles.textLink}>{t("today.upcoming")}</Text></Pressable>}
     </ScrollView>
     <BottomNav active="today" onToday={onToday} onCapture={onCaptureChoice} onLibrary={onLibrary} />
   </Screen>;
@@ -89,4 +92,54 @@ export function FeedbackModal({ visible, onAnswer }: { visible: boolean; onAnswe
   return <Modal visible={visible} transparent animationType="fade" onRequestClose={() => onAnswer()}>
     <View style={screenStyles.modalBackdrop}><Surface style={screenStyles.feedbackBox}><Eyebrow>{t("feedback.eyebrow")}</Eyebrow><Text maxFontSizeMultiplier={1.8} style={screenStyles.feedbackTitle}>{t("feedback.question")}</Text><Body muted>{t("feedback.body")}</Body><View style={screenStyles.gap24}><Action label={t("feedback.yes")} onPress={() => onAnswer("yes")} /></View><View style={screenStyles.gap12}><Action kind="secondary" label={t("feedback.notReally")} onPress={() => onAnswer("not_really")} /></View><View style={screenStyles.gap12}><Action kind="ghost" label={t("feedback.skip")} onPress={() => onAnswer()} /></View></Surface></View>
   </Modal>;
+}
+
+/**
+ * The next insights to come back and the day each becomes due in Today. It is read-only: opening
+ * it never counts as a resurfacing. Reminder delivery is described separately because it is
+ * approximate, capped at one a day and skips quiet days.
+ */
+export function UpcomingScreen({ status, list, settings, remindersOn, onOpenDetail, onRetry, onBack }: {
+  status: TodayStatus;
+  list: UpcomingList | null;
+  settings: Pick<Settings, "dailyCap" | "notificationTime" | "quietDays">;
+  /** null while the permission is unknown; nothing is said about reminders then. */
+  remindersOn: boolean | null;
+  onOpenDetail: (insightId: string) => void;
+  onRetry: () => void;
+  onBack: () => void;
+}) {
+  const clock = new Date();
+  const when = (scheduledAt: string) => {
+    const timing = upcomingTiming(scheduledAt, clock);
+    return timing.kind === "due" ? t("upcoming.due") : timing.kind === "later_today" ? t("upcoming.laterToday")
+      : timing.kind === "tomorrow" ? t("upcoming.tomorrow") : t("upcoming.from", { date: formatDate(timing.at) });
+  };
+  const quiet = settings.quietDays.map((day) => weekdayName(day, "long")).join(", ");
+  const items = list?.items ?? [];
+  return <Screen>
+    <Header title={t("upcoming.header")} back={onBack} />
+    <Eyebrow>{t("upcoming.eyebrow")}</Eyebrow><Title>{t("upcoming.title")}</Title>
+    <Body muted>{t("upcoming.intro")}</Body>
+    <View style={screenStyles.gap24}>
+      {status === "loading" ? <TodaySkeleton />
+        : status === "error" ? <Surface style={screenStyles.emptyCard}><Ionicons name="cloud-offline-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{t("upcoming.errorTitle")}</Text><Body muted>{t("today.errorBody")}</Body><View style={screenStyles.gap24}><Action label={t("common.tryAgain")} icon="refresh" onPress={onRetry} /></View></Surface>
+        : items.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name="calendar-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{t("upcoming.emptyTitle")}</Text><Body muted>{t("upcoming.emptyBody")}</Body></Surface>
+        : items.map(({ insight, event }) => {
+          const text = insight.content || t("common.savedPhoto");
+          const label = when(event.scheduledAt);
+          return <Pressable key={event.id} accessibilityRole="button" accessibilityLabel={`${text}. ${label}`} onPress={() => onOpenDetail(insight.id)} style={screenStyles.libraryRow}>
+            {insight.imagePath ? <Thumbnail path={insight.imagePath} /> : <View style={screenStyles.libraryIcon}><Ionicons name="calendar-outline" size={19} color={palette.accentDark} /></View>}
+            <View style={screenStyles.flex}><Text numberOfLines={2} style={screenStyles.libraryText}>{text}</Text><Text style={screenStyles.libraryDate}>{label}</Text></View>
+            <Ionicons name="chevron-forward" size={17} color={palette.muted} />
+          </Pressable>;
+        })}
+      {status === "ready" && !!list && list.total > items.length && <Body muted>{t("upcoming.more", { count: list.total - items.length })}</Body>}
+    </View>
+    {status === "ready" && items.length > 0 && <View style={screenStyles.gap24}>
+      <Body muted>{t("upcoming.cap", { count: settings.dailyCap })}</Body>
+      {remindersOn !== null && <View style={screenStyles.gap12}><Body muted>{!remindersOn ? t("upcoming.remindersOff")
+        : `${t("upcoming.remindersOn", { time: settings.notificationTime })}${quiet ? ` ${t("upcoming.quietDays", { days: quiet })}` : ""}`}</Body></View>}
+    </View>}
+  </Screen>;
 }

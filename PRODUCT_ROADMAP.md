@@ -12,7 +12,7 @@ The previous feature-first roadmap's steps 1–6 have code implementations. Do n
 
 ## Next feature pack — recommended order
 
-These enhancements beyond v0.2 are tracked under [SCRUM-58](https://alexadima.atlassian.net/browse/SCRUM-58). SCRUM-61 is implemented and SCRUM-65's simulator gates are verified; the other features remain planned. Keep the simple core path usable after every slice. Each feature should include English/Romanian copy, accessibility labels, store/domain tests and backup/migration coverage where data changes.
+These enhancements beyond v0.2 are tracked under [SCRUM-58](https://alexadima.atlassian.net/browse/SCRUM-58). SCRUM-61 and SCRUM-64 are implemented and SCRUM-65's simulator gates are verified; the other features remain planned. Keep the simple core path usable after every slice. Each feature should include English/Romanian copy, accessibility labels, store/domain tests and backup/migration coverage where data changes.
 
 ### 1. Prove backup and restore with photos in the native app — done on the simulator
 
@@ -26,11 +26,11 @@ Jira: [SCRUM-61](https://alexadima.atlassian.net/browse/SCRUM-61).
 
 Commit `0b56eb5` adds an **All insights** tab, status labels, and search across content, context and source that ignores case and accents, including Romanian comma/cedilla forms. Category, favorite and sort controls still compose; filter state survives detail navigation. Three new tests cover mixed statuses, lifecycle edits and a 5,000-insight query (25 ms on this run's node:sqlite). The iOS simulator flow and three complete smoke runs were recorded with the commit. Device SQLCipher latency and physical-device acceptance remain unmeasured; revisit indexing or pagination only if a measured native library is slow. Do not rebuild this feature as a new task.
 
-### 3. Make the next return understandable
+### 3. Make the next return understandable — implemented
 
 Jira: [SCRUM-64](https://alexadima.atlassian.net/browse/SCRUM-64).
 
-Detail shows one next-resurfacing date, but there is no overview. Add a small **Upcoming** section showing the next few active insights and their *in-app due dates*, with a clear distinction from approximate notification delivery and quiet weekdays. Link to the insight's detail and existing snooze controls; do not add streaks or force an extra exposure. Gate: it matches the production schedule through pause/archive/snooze, time-zone changes and an empty queue, without leaking insight text on the lock screen.
+Implemented on 25 October 2026. Today has a "See what's coming up" link to an **Upcoming** screen: the next 20 active insights not already on Today, soonest first. Each row says "Due now · waiting for room in Today", "Later today", "Tomorrow" or "From {date}" by local calendar day, and the total is counted. A footer explains the daily cap and that reminders are approximate (time, quiet days, or off). Rows open Detail (with snooze), and Back returns to Upcoming. It is a separate screen, so Today never shows upcoming text unasked, and it is read-only: looking is not a resurfacing. Nothing is added to notifications. Four store/domain tests cover pause, resume, archive, snooze, a real showing, the daily cap, an empty queue, the limit, a time-zone change and the DST night. A Release build on the iOS 27 simulator was checked: the rows matched the stored schedule, snoozing from Detail moved the row on return, and the largest text size wrapped cleanly. The smoke script now opens Upcoming (18 steps, three consecutive passes). Physical-device acceptance is not done.
 
 ### 4. Make reflections maintainable
 
