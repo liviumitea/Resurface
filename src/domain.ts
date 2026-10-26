@@ -63,6 +63,8 @@ export type Reflection = {
   eventId: string;
   content: string;
   createdAt: string;
+  /** Set when the note was later changed; null if never edited. Schema 4. */
+  updatedAt: string | null;
 };
 /** A user-made label for organizing insights; never assigned automatically. */
 export type Category = { id: string; name: string; createdAt: string };

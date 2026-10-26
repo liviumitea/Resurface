@@ -10,7 +10,11 @@ When writing to support, never send your insights, photos, backup files or backu
 Your insights live only on this phone. In Settings → Backup, **Create encrypted backup** makes a password-protected
 file; save it somewhere other than the phone (Files/iCloud Drive, Google Drive, a computer). Then use
 **Verify a backup file** to check that the file opens with your password. Settings shows when you last made and
-verified one. Make a new backup after adding things you care about.
+verified one. Make a new backup after adding things you care about. A backup that contains an edited reflection
+note needs a Resurface build from 26 October 2026 or later to restore; an older build refuses it without changing anything.
+
+You can add, change or remove the note on any past resurfacing from the insight's history. This never changes
+your answer or when the insight comes back.
 
 ## Moving to a new phone
 
@@ -61,7 +65,9 @@ elsewhere must be deleted where you saved them.
 
 **Păstrează un backup.** Ideile sunt doar pe acest telefon. În Setări → Backup, **Creează un backup criptat** face un
 fișier protejat cu parolă; salvează-l în afara telefonului, apoi folosește **Verifică un fișier de backup** ca să vezi că
-se deschide cu parola ta.
+se deschide cu parola ta. Un backup care conține o notiță editată se restaurează doar cu o versiune Resurface din
+26 octombrie 2026 sau mai nouă; o versiune mai veche îl refuză fără să schimbe nimic. Poți adăuga, modifica sau șterge notița oricărei
+reveniri din istoricul ideii; răspunsul tău și data următoarei reveniri rămân aceleași.
 
 **Telefon nou.** Pe telefonul vechi creează un backup și salvează-l unde îl poate găsi telefonul nou. Pe
 telefonul nou instalează Resurface, apasă **Restaurează dintr-un backup** pe primul ecran (sau Setări →

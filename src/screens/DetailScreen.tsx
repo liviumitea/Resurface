@@ -1,5 +1,6 @@
-import { Text, TextInput, View } from "react-native";
-import { MAX_SOURCE_LENGTH, isValidInsight, type Category, type InsightDetail, type InsightStatus } from "../domain";
+import { useState } from "react";
+import { Pressable, Text, TextInput, View } from "react-native";
+import { MAX_SOURCE_LENGTH, isValidInsight, localDay, type Category, type InsightDetail, type InsightStatus, type Reflection, type ResurfaceEvent } from "../domain";
 import { formatDate, formatDateTime, t, type MessageKey } from "../i18n";
 import { palette } from "../theme";
 import { Action, Body, Eyebrow, Header, IconButton, Screen, Title } from "../ui";
@@ -14,7 +15,7 @@ export type DetailEdit = {
   categoryIds: string[];
 };
 
-export function DetailScreen({ detail, edit, categories, onToggleCategory, onCreateCategory, onSaveEdit, onToggleFavorite, onSnooze, onStatus, onArchive, onDelete, onBack }: {
+export function DetailScreen({ detail, edit, categories, onToggleCategory, onCreateCategory, onSaveEdit, onToggleFavorite, onSnooze, onStatus, onArchive, onDelete, onSaveNote, onRemoveNote, onBack }: {
   detail: InsightDetail;
   edit: DetailEdit;
   categories: Category[];
@@ -27,9 +28,16 @@ export function DetailScreen({ detail, edit, categories, onToggleCategory, onCre
   /** Asks for confirmation before archiving. */
   onArchive: () => void;
   onDelete: () => void;
+  /** Resolves true once saved, so the editor can close. */
+  onSaveNote: (eventId: string, text: string) => Promise<boolean>;
+  /** Asks for confirmation; resolves true once removed. */
+  onRemoveNote: (eventId: string) => Promise<boolean>;
   onBack: () => void;
 }) {
   const shown = detail.events.filter((event) => !!event.shownAt);
+  // The exposure whose note is open for editing, if any.
+  const [noteEventId, setNoteEventId] = useState<string | null>(null);
+  const [noteText, setNoteText] = useState("");
   return <Screen>
     <Header title={t("detail.header")} back={onBack}
       right={<IconButton icon={detail.insight.favorite ? "star" : "star-outline"} label={detail.insight.favorite ? t("detail.unfavorite") : t("detail.favorite")} onPress={onToggleFavorite} />} />
@@ -62,7 +70,36 @@ export function DetailScreen({ detail, edit, categories, onToggleCategory, onCre
       {detail.insight.status !== "archived" && <View style={screenStyles.gap12}><Action kind="ghost" label={t("common.archive")} onPress={onArchive} /></View>}
       <View style={screenStyles.gap12}><Action kind="danger" label={t("detail.deletePermanently")} onPress={onDelete} /></View>
       <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>{t("detail.history")}</Text>{shown.length > 0 && <Body muted>{t("detail.historySummary", { count: shown.length })}</Body>}</View>
-      {shown.length === 0 ? <Body muted>{t("detail.historyEmpty")}</Body> : shown.map((event) => <View key={event.id} style={screenStyles.historyRow}><View style={screenStyles.historyDot} /><View style={screenStyles.flex}><Text style={screenStyles.historyDate}>{formatDateTime(event.shownAt!)}</Text><Text style={screenStyles.historyMeta}>{t(`detail.response.${event.response ?? "seen"}` as MessageKey)}</Text>{detail.reflections.filter((reflection) => reflection.eventId === event.id).map((reflection) => <Text key={reflection.id} style={screenStyles.reflectionText}>{reflection.content}</Text>)}</View></View>)}
+      {shown.length === 0 ? <Body muted>{t("detail.historyEmpty")}</Body> : shown.map((event) => {
+        const notes = detail.reflections.filter((reflection) => reflection.eventId === event.id);
+        const when = formatDateTime(event.shownAt!);
+        return <View key={event.id} style={screenStyles.historyRow}><View style={screenStyles.historyDot} /><View style={screenStyles.flex}>
+          <Text style={screenStyles.historyDate}>{when}</Text>
+          <Text style={screenStyles.historyMeta}>{t(`detail.response.${event.response ?? "seen"}` as MessageKey)}</Text>
+          {noteEventId === event.id ? <>
+            <TextInput autoFocus multiline textAlignVertical="top" value={noteText} onChangeText={setNoteText} placeholder={t("reflect.notePlaceholder")} placeholderTextColor={palette.muted}
+              style={[screenStyles.contextInput, screenStyles.gap12]} accessibilityLabel={t("detail.noteInputLabel", { date: when })} />
+            <View style={screenStyles.gap12}><Action label={t("detail.saveNote")} disabled={!noteText.trim() || noteText.trim() === notes[0]?.content}
+              onPress={() => { void onSaveNote(event.id, noteText).then((saved) => { if (saved) setNoteEventId(null); }); }} /></View>
+            {notes.length > 0 && <View style={screenStyles.gap12}><Action kind="danger" label={t("detail.removeNote")}
+              onPress={() => { void onRemoveNote(event.id).then((removed) => { if (removed) setNoteEventId(null); }); }} /></View>}
+            <View style={screenStyles.gap12}><Action kind="ghost" label={t("common.cancel")} onPress={() => setNoteEventId(null)} /></View>
+          </> : <>
+            {notes.map((reflection) => <View key={reflection.id}><Text style={screenStyles.reflectionText}>{reflection.content}</Text>{noteMeta(reflection, event) && <Text style={screenStyles.historyMeta}>{noteMeta(reflection, event)}</Text>}</View>)}
+            <Pressable accessibilityRole="button" accessibilityLabel={t(notes.length ? "detail.editNoteLabel" : "detail.addNoteLabel", { date: when })}
+              onPress={() => { setNoteText(notes[0]?.content ?? ""); setNoteEventId(event.id); }} style={screenStyles.manageLink}>
+              <Text style={screenStyles.textLinkInline}>{notes.length ? t("detail.editNote") : t("detail.addNote")}</Text>
+            </Pressable>
+          </>}
+        </View></View>;
+      })}
     </>}
   </Screen>;
+}
+
+/** When a note was edited, or added on a later day than the exposure; nothing for a note written at the time. */
+function noteMeta(reflection: Reflection, event: ResurfaceEvent): string | null {
+  if (reflection.updatedAt) return t("detail.noteEdited", { date: formatDate(reflection.updatedAt) });
+  if (event.shownAt && localDay(new Date(reflection.createdAt)) !== localDay(new Date(event.shownAt))) return t("detail.noteAdded", { date: formatDate(reflection.createdAt) });
+  return null;
 }

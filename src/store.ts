@@ -43,6 +43,8 @@ export type StoreDependencies = {
 };
 
 export type NotificationCandidate = ResurfaceEvent & { content: string | null };
+/** What changing a reflection note did. */
+export type NoteChange = "added" | "edited" | "removed" | "unchanged";
 /** The next insights to come back, soonest first, and how many are pending in all. */
 export type UpcomingList = { items: TodayItem[]; total: number };
 
@@ -355,8 +357,16 @@ export function createStore({ db, id, now }: StoreDependencies) {
       if (!event || event.response || !event.shownAt) return;
       await db().runAsync("UPDATE events SET response = ? WHERE id = ?", response, eventId);
       if (reflection?.trim()) {
-        await db().runAsync("INSERT INTO reflections (id, insightId, eventId, content, createdAt) VALUES (?, ?, ?, ?, ?)", id(), event.insightId, eventId, reflection.trim(), now().toISOString());
-        await track("reflection_added");
+        // A note added from history before answering stays; the answer's note is appended to it,
+        // so an exposure keeps one note and nothing is lost.
+        const existing = await db().getFirstAsync<Reflection>("SELECT * FROM reflections WHERE eventId = ? ORDER BY createdAt LIMIT 1", eventId);
+        if (existing) {
+          await db().runAsync("UPDATE reflections SET content = ?, updatedAt = ? WHERE id = ?", `${existing.content}\n\n${reflection.trim()}`, now().toISOString(), existing.id);
+          await track("reflection_edited");
+        } else {
+          await db().runAsync("INSERT INTO reflections (id, insightId, eventId, content, createdAt) VALUES (?, ?, ?, ?, ?)", id(), event.insightId, eventId, reflection.trim(), now().toISOString());
+          await track("reflection_added");
+        }
       }
       if (response === "yes") {
         await track("still_relevant");
@@ -386,6 +396,35 @@ export function createStore({ db, id, now }: StoreDependencies) {
       snoozed = true;
     });
     return snoozed;
+  }
+
+  /**
+   * Adds, edits or (with blank text) removes the note on an exposure the user actually saw. Only the
+   * note changes: the event, its response and the schedule stay as they are, so a note is never
+   * another exposure or answer. Events that were never shown take no note.
+   */
+  async function setReflectionNote(eventId: string, text: string): Promise<NoteChange> {
+    let change: NoteChange = "unchanged";
+    await db().withTransactionAsync(async () => {
+      const event = await getEvent(eventId);
+      if (!event?.shownAt) return;
+      const content = text.trim();
+      const existing = await db().getFirstAsync<Reflection>("SELECT * FROM reflections WHERE eventId = ? ORDER BY createdAt LIMIT 1", eventId);
+      if (!content) {
+        if (!existing) return;
+        await db().runAsync("DELETE FROM reflections WHERE eventId = ?", eventId);
+        change = "removed";
+      } else if (existing) {
+        if (existing.content === content) return;
+        await db().runAsync("UPDATE reflections SET content = ?, updatedAt = ? WHERE id = ?", content, now().toISOString(), existing.id);
+        change = "edited";
+      } else {
+        await db().runAsync("INSERT INTO reflections (id, insightId, eventId, content, createdAt) VALUES (?, ?, ?, ?, ?)", id(), event.insightId, eventId, content, now().toISOString());
+        change = "added";
+      }
+      await track(change === "added" ? "reflection_added" : change === "edited" ? "reflection_edited" : "reflection_removed");
+    });
+    return change;
   }
 
   async function setInsightStatus(insightId: string, status: InsightStatus): Promise<void> {
@@ -505,8 +544,8 @@ export function createStore({ db, id, now }: StoreDependencies) {
         await db().runAsync("INSERT INTO insight_categories (insightId, categoryId) VALUES (?, ?)", link.insightId, link.categoryId);
       }
       for (const reflection of contents.reflections) {
-        await db().runAsync("INSERT INTO reflections (id, insightId, eventId, content, createdAt) VALUES (?, ?, ?, ?, ?)",
-          reflection.id, reflection.insightId, reflection.eventId, reflection.content, reflection.createdAt);
+        await db().runAsync("INSERT INTO reflections (id, insightId, eventId, content, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)",
+          reflection.id, reflection.insightId, reflection.eventId, reflection.content, reflection.createdAt, reflection.updatedAt ?? null);
       }
       await saveSettings({ ...contents.settings, onboardingComplete: true });
       await track("backup_restored");
@@ -537,7 +576,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
     exportRows, replaceAllRows, recordBackupVerified, getBackupStatus,
     listCategories, createCategory, renameCategory, deleteCategory, setInsightCategories, setFavorite,
     track, getSettings, saveSettings, insertInsight, countInsights, listInsights, getInsight, getEvent,
-    getDetail, selectToday, listUpcoming, markShown, markOpened, markCompleted, respondToEvent, setInsightStatus, snoozeInsight,
+    getDetail, selectToday, listUpcoming, markShown, markOpened, markCompleted, respondToEvent, setReflectionNote, setInsightStatus, snoozeInsight,
     editInsight, deleteInsightRow, markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics,
     notificationCandidates, clearFutureNotificationPlans, setNotificationPlan,
   };

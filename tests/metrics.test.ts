@@ -8,7 +8,7 @@ process.env.TZ = "Europe/Bucharest";
 const KNOWN_EVENTS = new Set([
   "insight_created", "insight_created_text", "insight_created_photo", "insight_created_ocr",
   "resurface_selected", "resurface_shown", "notification_opened", "notification_scheduled",
-  "reflection_added", "still_relevant", "insight_paused", "insight_archived", "insight_resumed",
+  "reflection_added", "reflection_edited", "reflection_removed", "still_relevant", "insight_paused", "insight_archived", "insight_resumed",
   "insight_restored", "insight_snoozed", "insight_deleted", "resurface_value_feedback_asked", "resurface_value_feedback",
   "category_created", "category_deleted", "backup_created", "backup_created_incomplete", "backup_verified", "backup_restored", "share_received", "onboarding_started", "onboarding_completed",
 ]);

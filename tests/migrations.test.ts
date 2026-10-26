@@ -37,7 +37,11 @@ test("the 0.1.0 database upgrades to the current schema with every record intact
     assert.equal(await schemaVersion(migrationDatabase(sqlite)), 0);
     assert.equal(await runMigrations(migrationDatabase(sqlite)), SCHEMA_VERSION);
     assert.equal(await schemaVersion(migrationDatabase(sqlite)), SCHEMA_VERSION);
-    const expected = { ...before, insights: before.insights!.map((row) => ({ ...row, source: null, favorite: 0 })) };
+    const expected = {
+      ...before,
+      insights: before.insights!.map((row) => ({ ...row, source: null, favorite: 0 })),
+      reflections: before.reflections!.map((row) => ({ ...row, updatedAt: null })),
+    };
     assert.deepEqual(snapshot(sqlite), expected, "insights, photo paths, events, reflections, settings and counters unchanged; new fields start empty");
 
     // The production store works on the upgraded data.

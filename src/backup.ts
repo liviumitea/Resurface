@@ -15,12 +15,12 @@ import {
 export const BACKUP_FORMAT = "resurface-backup";
 /**
  * Archive versions this app reads. Version 2 adds categories; version 3 adds insight sources and
- * favorites. An archive is written at the lowest version that holds its data, so it stays readable
+ * favorites; version 4 adds when a reflection note was edited. An archive is written at the lowest version that holds its data, so it stays readable
  * by older apps when it can, while an older app refuses a newer archive instead of silently
  * dropping what it doesn't know.
  */
-export const BACKUP_VERSION = 3;
-export const READABLE_BACKUP_VERSIONS: readonly number[] = [1, 2, 3];
+export const BACKUP_VERSION = 4;
+export const READABLE_BACKUP_VERSIONS: readonly number[] = [1, 2, 3, 4];
 export const BACKUP_EXTENSION = "resurfacebackup";
 /** Declared in app.json so iOS treats backups as ordinary data (for example, offering Save to Files). */
 export const BACKUP_UTI = "app.resurface.mobile.backup";
@@ -42,7 +42,11 @@ export type BackupContents = {
   insightCategories?: InsightCategory[];
 };
 
-export function archiveVersion(contents: Pick<BackupContents, "categories" | "insightCategories"> & { insights?: Pick<Insight, "source" | "favorite">[] }): number {
+export function archiveVersion(contents: Pick<BackupContents, "categories" | "insightCategories"> & {
+  insights?: Pick<Insight, "source" | "favorite">[];
+  reflections?: Pick<Reflection, "updatedAt">[];
+}): number {
+  if (contents.reflections?.some((reflection) => reflection.updatedAt)) return 4;
   if (contents.insights?.some((insight) => insight.source || insight.favorite)) return 3;
   return contents.categories?.length || contents.insightCategories?.length ? 2 : 1;
 }
@@ -285,7 +289,9 @@ export function validateBackupContents(value: unknown, limits: BackupLimits = BA
 
   const reflectionIds = new Set<string>();
   for (const item of reflections) {
-    if (!isRecord(item) || !isText(item.id) || !isText(item.insightId) || !isText(item.eventId) || !isText(item.content) || !isTimestamp(item.createdAt)) {
+    if (!isRecord(item) || !isText(item.id) || !isText(item.insightId) || !isText(item.eventId) || !isText(item.content) || !isTimestamp(item.createdAt)
+      // Version 4 field; absent in older archives, which restore as never edited.
+      || !(item.updatedAt === undefined || isOptionalTimestamp(item.updatedAt))) {
       throw invalid("reflection record");
     }
     if (reflectionIds.has(item.id)) throw invalid("duplicate reflection");

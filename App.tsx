@@ -10,7 +10,7 @@ import { clearTransientCaches, deletePickedImageFromCache, isTextRecognitionSupp
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
   countInsights, createInsight, deleteInsight, editInsight, getBetaMetrics, getDetail, getEvent, getInsight, getSettings, getShownCount,
-  markCompleted, markValueFeedbackAsked, markOpened, markShown, openStorage, respondToEvent, setAsideUnreadableData, snoozeInsight, StorageError,
+  markCompleted, markValueFeedbackAsked, markOpened, markShown, openStorage, respondToEvent, setReflectionNote, setAsideUnreadableData, snoozeInsight, StorageError,
   CategoryError, createCategory, deleteCategory, listCategories, renameCategory, setFavorite, setInsightCategories,
   type BetaMetrics, type StorageFailure, listUpcoming, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
 } from "./src/storage";
@@ -477,6 +477,22 @@ function ResurfaceApp() {
     } catch (error) { report(error); }
   };
 
+  const saveNote = async (eventId: string, text: string) => {
+    if (!detail) return false;
+    try {
+      await setReflectionNote(eventId, text);
+      await openDetail(detail.insight.id, detailOrigin);
+      return true;
+    } catch (error) { report(error); return false; }
+  };
+
+  const removeNote = (eventId: string) => new Promise<boolean>((resolve) => {
+    Alert.alert(t("detail.removeNoteTitle"), t("detail.removeNoteBody"), [
+      { text: t("common.cancel"), style: "cancel", onPress: () => resolve(false) },
+      { text: t("detail.removeNote"), style: "destructive", onPress: () => { void saveNote(eventId, "").then(resolve); } },
+    ], { cancelable: true, onDismiss: () => resolve(false) });
+  });
+
   const toggleFavorite = async () => {
     if (!detail) return;
     try {
@@ -623,7 +639,8 @@ function ResurfaceApp() {
       onToggleCategory={(categoryId) => setEditCategoryIds((ids) => toggle(ids, categoryId))}
       onCreateCategory={(name) => addCategory(name, (categoryId) => setEditCategoryIds((ids) => [...ids, categoryId]))}
       onSaveEdit={() => { void saveEdit(); }} onToggleFavorite={() => { void toggleFavorite(); }} onSnooze={snooze}
-      onStatus={(status) => { void updateStatus(status); }} onArchive={confirmArchive} onDelete={confirmDelete} onBack={leaveDetail} />}
+      onStatus={(status) => { void updateStatus(status); }} onArchive={confirmArchive} onDelete={confirmDelete}
+      onSaveNote={saveNote} onRemoveNote={removeNote} onBack={leaveDetail} />}
 
     {route === "categories" && <CategoriesScreen categories={categories} onCreate={(name) => addCategory(name)} onRename={renameCategoryFromList} onDelete={confirmDeleteCategory} onBack={goLibrary} />}
 

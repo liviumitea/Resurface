@@ -72,6 +72,11 @@ export const SCHEMA_V3_SQL = `
   ALTER TABLE insights ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1));
 `;
 
+/** Schema version 4: when a reflection note was last edited (SCRUM-62); null if never. */
+export const SCHEMA_V4_SQL = `
+  ALTER TABLE reflections ADD COLUMN updatedAt TEXT;
+`;
+
 export const SELECT_TODAY_EXISTING_SQL = `
   SELECT events.* FROM events JOIN insights ON insights.id = events.insightId
   WHERE events.selectedDay = ? AND events.cancelledAt IS NULL AND insights.status = 'active'
