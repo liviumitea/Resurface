@@ -64,6 +64,8 @@ function ResurfaceApp() {
   const [captureContent, setCaptureContent] = useState("");
   const [captureContext, setCaptureContext] = useState("");
   const [captureImageUri, setCaptureImageUri] = useState<string | null>(null);
+  const [captureResurface, setCaptureResurface] = useState(true);
+  const [savedResurface, setSavedResurface] = useState(true);
   const [ocrBusy, setOcrBusy] = useState(false);
   const ocrAttempt = useRef(0);
   // Aborting deletes the decrypted copy that text recognition of a saved photo reads.
@@ -292,6 +294,7 @@ function ResurfaceApp() {
     setCaptureImageUri(null);
     setCaptureCategoryIds([]);
     setCaptureSource("");
+    setCaptureResurface(true);
     setRoute("capture");
   };
 
@@ -364,7 +367,7 @@ function ResurfaceApp() {
       const wasFirst = (await countInsights()) === 0;
       let insight: Insight;
       try {
-        insight = await createInsight(captureContent, captureContext, captureImageUri, captureCategoryIds, captureSource, setSaveStage);
+        insight = await createInsight(captureContent, captureContext, captureImageUri, captureCategoryIds, captureSource, setSaveStage, captureResurface);
       } catch {
         // Nothing was stored (a prepared photo is removed), and the draft and original photo stay on screen.
         Alert.alert(t("capture.saveFailedTitle"), t(captureImageUri ? "capture.saveFailedPhoto" : "capture.saveFailedBody"));
@@ -373,6 +376,7 @@ function ResurfaceApp() {
       deletePickedImageFromCache(captureImageUri);
       setCaptureImageUri(null);
       setSavedInsightId(insight.id);
+      setSavedResurface(insight.status === "active");
       setFirstSave(wasFirst);
       if (wasFirst) {
         const next = await saveSettings({ onboardingComplete: true });
@@ -388,7 +392,10 @@ function ResurfaceApp() {
   };
 
   const finishSave = async () => {
-    if (firstSave && !settings?.permissionAsked) setRoute("permission");
+    // A Library-only save would be hidden behind the default Active tab.
+    if (!savedResurface && library.status === "active") library.setStatus("all");
+    // Reminders are offered with the first save that will come back, not for one kept as a memory.
+    if (savedResurface && !settings?.permissionAsked) setRoute("permission");
     else if (captureOrigin === "library") goLibrary();
     else await goToday();
   };
@@ -681,7 +688,7 @@ function ResurfaceApp() {
     cancelPhotoText();
     if (detailOrigin === "library") goLibrary();
     else if (detailOrigin === "upcoming") void goUpcoming();
-    else if (firstSave && !settings.permissionAsked) setRoute("permission");
+    else if (firstSave && savedResurface && !settings.permissionAsked) setRoute("permission");
     else void goToday();
   };
 
@@ -710,7 +717,8 @@ function ResurfaceApp() {
     {route === "capture-choice" && <CaptureChoiceScreen onChoose={chooseCapture} onCancel={cancelCaptureChoice} />}
 
     {route === "capture" && <CaptureScreen
-      draft={{ content: captureContent, setContent: setCaptureContent, context: captureContext, setContext: setCaptureContext, source: captureSource, setSource: setCaptureSource, imageUri: captureImageUri, categoryIds: captureCategoryIds }}
+      draft={{ content: captureContent, setContent: setCaptureContent, context: captureContext, setContext: setCaptureContext, source: captureSource, setSource: setCaptureSource, imageUri: captureImageUri, categoryIds: captureCategoryIds,
+        resurface: captureResurface, setResurface: setCaptureResurface }}
       categories={categories}
       onToggleCategory={(categoryId) => setCaptureCategoryIds((ids) => toggle(ids, categoryId))}
       onCreateCategory={(name) => addCategory(name, (categoryId) => setCaptureCategoryIds((ids) => [...ids, categoryId]))}
@@ -724,7 +732,7 @@ function ResurfaceApp() {
       onKeep={keepPhotoAsImage} onExtract={() => { void extractPhotoText(); }} onStopExtracting={cancelPhotoText}
       onChooseAnother={() => { void pickImage("library"); }} onBack={() => setRoute("capture")} />}
 
-    {route === "saved" && <SavedScreen firstSave={firstSave} onContinue={() => { void finishSave(); }} onView={() => { if (savedInsightId) void openDetail(savedInsightId, "today"); }} />}
+    {route === "saved" && <SavedScreen firstSave={firstSave} resurface={savedResurface} onContinue={() => { void finishSave(); }} onView={() => { if (savedInsightId) void openDetail(savedInsightId, "today"); }} />}
 
     {route === "permission" && <PermissionScreen onAnswer={(ask) => { void finishPermission(ask); }} />}
 

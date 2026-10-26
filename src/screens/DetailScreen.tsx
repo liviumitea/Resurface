@@ -103,6 +103,7 @@ export function DetailScreen({ detail, edit, photo, categories, onToggleCategory
           <View style={screenStyles.gap12}><Action kind="ghost" label={t("detail.snooze")} icon="time-outline" onPress={onSnooze} /></View>
         </>;
       })()}
+      {detail.insight.status === "paused" && <View style={screenStyles.gap24}><Body muted>{t("detail.resurfacingOffBody")}</Body></View>}
       <View style={screenStyles.gap12}>{detail.insight.status === "active" ? <Action kind="ghost" label={t("detail.pause")} onPress={() => onStatus("paused")} /> : <Action kind="secondary" label={detail.insight.status === "paused" ? t("detail.resume") : t("detail.restore")} onPress={() => onStatus("active")} />}</View>
       {detail.insight.status !== "archived" && <View style={screenStyles.gap12}><Action kind="ghost" label={t("common.archive")} onPress={onArchive} /></View>}
       <View style={screenStyles.gap12}><Action kind="danger" label={t("detail.deletePermanently")} onPress={onDelete} /></View>

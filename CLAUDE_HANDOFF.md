@@ -9,7 +9,7 @@ Build Resurface into a safe, useful iOS/Android product: a person captures their
 - Repository: <https://github.com/liviumitea/Resurface>, branch `main`. CI (`.github/workflows/ci.yml`) runs typecheck, tests, iOS/Android JS exports, and a clean native Android debug build on every push.
 - Leading [Product Spec v0.2](https://alexadima.atlassian.net/wiki/spaces/~5ff74facd364960139d5a2ee/pages/688150/Product+Spec+v0.2) and [Confluence space](https://alexadima.atlassian.net/wiki/spaces/~5ff74facd364960139d5a2ee/overview). Where older MVP/v0.1 pages differ, prefer v0.2 and record any deliberate exception.
 - [Jira SCRUM board](https://alexadima.atlassian.net/jira/software/projects/SCRUM/boards/1?filter=&groupBy=none). Issue-by-issue acceptance gates and their current status are in `PRODUCT_BACKLOG.md`. The Jira site is `alexadima.atlassian.net`; never use the unrelated `tieto.atlassian.net` connection. Claude Code's Atlassian connector only reaches tieto, so Jira updates in Claude sessions go through Codex (`--model gpt-5.6-sol`; the configured default `gpt-6-sol` is rejected for this ChatGPT account).
-- Architecture decisions: [SCRUM-21](https://alexadima.atlassian.net/browse/SCRUM-21), [SCRUM-22](https://alexadima.atlassian.net/browse/SCRUM-22). Epics SCRUM-23..28; child issues SCRUM-29..50; reflection-note regression [SCRUM-51](https://alexadima.atlassian.net/browse/SCRUM-51). The newly planned private-build feature pack is [SCRUM-58](https://alexadima.atlassian.net/browse/SCRUM-58), with children SCRUM-59..66.
+- Architecture decisions: [SCRUM-21](https://alexadima.atlassian.net/browse/SCRUM-21), [SCRUM-22](https://alexadima.atlassian.net/browse/SCRUM-22). Epics SCRUM-23..28; child issues SCRUM-29..50; reflection-note regression [SCRUM-51](https://alexadima.atlassian.net/browse/SCRUM-51). The newly planned private-build feature pack is [SCRUM-58](https://alexadima.atlassian.net/browse/SCRUM-58), with children SCRUM-59..66. The owner added [SCRUM-67](https://alexadima.atlassian.net/browse/SCRUM-67) (keep an insight as a memory, without resurfacing) on 26 October; it is implemented, see the roadmap.
 
 `RESURFACE_BUILD_PLAN.md` is historical planning context, not an acceptance report.
 
@@ -28,7 +28,7 @@ Expo SDK 57 / React Native 0.86 / TypeScript, version 0.1.0.
 - `src/media.ts` — photo preparation and encryption, text recognition wrapper, photo paths resolved by file name, launch-time cache sweep, shared-photo intake from the app-group container (never deletes hidden files there).
 - `src/i18n.ts` — English/Romanian UI strings, plural rules, locale dates; every user-visible string goes through `t()` (tests enforce matching keys/placeholders). Native permission strings live in `locales/*.json`.
 - `src/notifications.ts` — local reminder reconciliation. `src/ui.tsx`, `src/theme.ts` — components and palette.
-- `tests/` — `domain`, `storage-queries`, `lifecycle` (production store on node:sqlite, Europe/Bucharest DST clock), `backup`, `metrics`; shared `harness.ts`. 96 tests as of 26 October (also `photos`, `notes`, `upcoming`, `library`, `migrations`, `categories`, `sources`, `i18n`, `reminders`). `tests/fixtures/ocr/` holds the EN/RO OCR fixture photos and results.
+- `tests/` — `domain`, `storage-queries`, `lifecycle` (production store on node:sqlite, Europe/Bucharest DST clock), `backup`, `metrics`; shared `harness.ts`. 100 tests as of 26 October (also `library-only`, `photos`, `notes`, `upcoming`, `library`, `migrations`, `categories`, `sources`, `i18n`, `reminders`). `tests/fixtures/ocr/` holds the EN/RO OCR fixture photos and results.
 - `scripts/prepare-ios.mjs` — works around Expo SDK 57 Xcode scripts mishandling the space in `Proiect Alexandra`.
 - `scripts/smoke-ios.sh` — read-only simulator smoke pass (needs AXe); `scripts/make-ocr-fixtures.swift` / `check-ocr-fixtures.swift` — OCR fixtures and their macOS Vision check.
 - `docs/PRIVACY.md`, `docs/SUPPORT.md`, `docs/STORE_PRIVACY.md` — draft privacy notice, help/recovery guide and store privacy answers (EN/RO); the support contact is still a placeholder.
@@ -44,7 +44,7 @@ Expo SDK 57 / React Native 0.86 / TypeScript, version 0.1.0.
 
 ## What has and has not been verified
 
-Automated: typecheck and 96 tests passed locally on 26 October; iOS/Android JS exports and CI native Android build passed in earlier checks but were not rerun for this handoff update.
+Automated: typecheck and 100 tests passed locally on 26 October; iOS/Android JS exports and CI native Android build passed in earlier checks but were not rerun for this handoff update.
 
 iOS 27 simulator (iPhone 18 Pro), Release build, 23 Oct 2026: Today/Library/Settings at normal and largest accessibility text; `+` chooser and text capture; create backup → share sheet with Save to Files → saved file decrypts on the Mac; wrong password refused; replace restore removed a newer insight and kept history; snooze moved the next date; app-switcher snapshot shows only the wordmark; after a simulator keychain reset the app refused to reset data, Start fresh moved everything aside, and restore from onboarding brought the insight back.
 

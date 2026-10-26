@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Image, Text, TextInput, View } from "react-native";
+import { Image, Switch, Text, TextInput, View } from "react-native";
 import { MAX_SOURCE_LENGTH, isValidInsight, type Category } from "../domain";
 import { t } from "../i18n";
 import type { PhotoSaveStage } from "../media";
@@ -31,6 +31,8 @@ export type CaptureDraft = {
   source: string; setSource: (value: string) => void;
   imageUri: string | null;
   categoryIds: string[];
+  /** Off saves to Library only, without Today appearances or reminders. */
+  resurface: boolean; setResurface: (value: boolean) => void;
 };
 
 export function CaptureScreen({ draft, categories, onToggleCategory, onCreateCategory, onRemovePhoto, onPickImage, onSave, onBack, busy, saveStage, slowSeconds }: {
@@ -57,7 +59,11 @@ export function CaptureScreen({ draft, categories, onToggleCategory, onCreateCat
     <TextInput value={draft.source} onChangeText={draft.setSource} maxLength={MAX_SOURCE_LENGTH} placeholder={t("capture.sourcePlaceholder")} placeholderTextColor={palette.muted} style={screenStyles.search} accessibilityLabel={t("capture.sourceA11y")} />
     <Text style={screenStyles.fieldLabel}>{t("category.field")} <Text style={screenStyles.optional}>{t("common.optional")}</Text></Text>
     <CategoryChips categories={categories} selected={draft.categoryIds} onToggle={onToggleCategory} onCreate={onCreateCategory} />
-    <View style={screenStyles.row}><View style={screenStyles.flex}><Action kind="secondary" icon="camera-outline" label={t("choice.takePhoto")} onPress={() => onPickImage("camera")} /></View><View style={screenStyles.flex}><Action kind="secondary" icon="images-outline" label={t("choice.choosePhoto")} onPress={() => onPickImage("library")} /></View></View>
+    <View style={screenStyles.switchRow}>
+      <View style={screenStyles.flex}><Text style={screenStyles.switchTitle}>{t("capture.resurface")}</Text><Text style={screenStyles.switchDescription}>{t(draft.resurface ? "capture.resurfaceOn" : "capture.resurfaceOff")}</Text></View>
+      <Switch accessibilityLabel={t("capture.resurfaceLabel")} value={draft.resurface} onValueChange={draft.setResurface} trackColor={{ true: palette.accentDark }} />
+    </View>
+    <View style={[screenStyles.row, screenStyles.gap24]}><View style={screenStyles.flex}><Action kind="secondary" icon="camera-outline" label={t("choice.takePhoto")} onPress={() => onPickImage("camera")} /></View><View style={screenStyles.flex}><Action kind="secondary" icon="images-outline" label={t("choice.choosePhoto")} onPress={() => onPickImage("library")} /></View></View>
     <View style={screenStyles.gap24}><Action label={saveStage === "preparing" ? t("capture.preparingPhoto") : saveStage === "encrypting" ? t("capture.encryptingPhoto") : busy ? t("capture.saving") : t("capture.save")} icon="bookmark-outline" disabled={busy || !isValidInsight(draft.content, !!draft.imageUri)} onPress={onSave} /></View>
     {saveStage && saveStage !== "saving" && slowSeconds >= 3 && <Text accessibilityLiveRegion="polite" style={screenStyles.slowNote}>{t("capture.photoSlow", { seconds: slowSeconds })}</Text>}
     <Text style={screenStyles.privacyNote}>{t("capture.privacy")}</Text>
@@ -88,9 +94,10 @@ export function PhotoScreen({ imageUri, ocrBusy, slowSeconds, onKeep, onExtract,
   </Screen>;
 }
 
-export function SavedScreen({ firstSave, onContinue, onView }: { firstSave: boolean; onContinue: () => void; onView: () => void }) {
+/** `resurface` false: saved to Library only, so nothing promises a return. */
+export function SavedScreen({ firstSave, resurface, onContinue, onView }: { firstSave: boolean; resurface: boolean; onContinue: () => void; onView: () => void }) {
   return <Screen scroll={false}>
-    <View style={screenStyles.centerPanel}><View style={screenStyles.successIcon}><Ionicons name="checkmark" size={38} color={palette.accentDark} /></View><Eyebrow>{t("saved.eyebrow")}</Eyebrow><Title>{firstSave ? t("saved.firstTitle") : t("saved.title")}</Title><Body muted>{t("saved.body")}</Body></View>
+    <View style={screenStyles.centerPanel}><View style={screenStyles.successIcon}><Ionicons name="checkmark" size={38} color={palette.accentDark} /></View><Eyebrow>{t("saved.eyebrow")}</Eyebrow><Title>{firstSave ? t("saved.firstTitle") : t("saved.title")}</Title><Body muted>{t(resurface ? "saved.body" : "saved.libraryOnlyBody")}</Body></View>
     <View style={screenStyles.bottomActions}><Action label={t("common.continue")} onPress={onContinue} /><View style={screenStyles.gap12}><Action kind="ghost" label={t("saved.view")} onPress={onView} /></View></View>
   </Screen>;
 }

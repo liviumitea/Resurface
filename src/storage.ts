@@ -96,12 +96,12 @@ export const {
 
 export async function createInsight(
   content: string | null, context: string | null, imageUri: string | null, categoryIds: string[] = [], source: string | null = null,
-  onPhotoStage?: (stage: PhotoSaveStage) => void,
+  onPhotoStage?: (stage: PhotoSaveStage) => void, resurface = true,
 ): Promise<Insight> {
   const insightId = id();
   const imagePath = imageUri ? await encryptImageFromUri(imageUri, insightId, onPhotoStage) : null;
   try {
-    return await store.insertInsight(insightId, content, context, imagePath, categoryIds, source);
+    return await store.insertInsight(insightId, content, context, imagePath, categoryIds, source, resurface);
   } catch (error) {
     deleteEncryptedImage(imagePath);
     throw error;

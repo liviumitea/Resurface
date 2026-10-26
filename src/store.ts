@@ -150,8 +150,12 @@ export function createStore({ db, id, now }: StoreDependencies) {
     );
   }
 
-  /** Inserts the insight, its first event and any categories; the caller owns any already-encrypted photo. */
-  async function insertInsight(insightId: string, content: string | null, context: string | null, imagePath: string | null, categoryIds: string[] = [], source: string | null = null): Promise<Insight> {
+  /**
+   * Inserts the insight, its first event and any categories; the caller owns any already-encrypted photo.
+   * With `resurface` false it is saved to Library only: paused, with no event, so it never enters
+   * Today or a reminder until resurfacing is turned on (which schedules it like a resume).
+   */
+  async function insertInsight(insightId: string, content: string | null, context: string | null, imagePath: string | null, categoryIds: string[] = [], source: string | null = null, resurface = true): Promise<Insight> {
     const created = now();
     const insight: Insight = {
       id: insightId,
@@ -159,7 +163,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
       context: context?.trim() || null,
       imagePath,
       imageMime: imagePath ? "image/jpeg" : null,
-      status: "active",
+      status: resurface ? "active" : "paused",
       createdAt: created.toISOString(),
       updatedAt: created.toISOString(),
       source: cleanSource(source),
@@ -171,9 +175,10 @@ export function createStore({ db, id, now }: StoreDependencies) {
         insight.id, insight.content, insight.context, insight.imagePath, insight.imageMime,
         insight.status, insight.createdAt, insight.updatedAt, insight.source, insight.favorite,
       );
-      await insertEvent(eventFor(insight.id, 0, created));
+      if (resurface) await insertEvent(eventFor(insight.id, 0, created));
       await linkCategories(insight.id, categoryIds);
       await track("insight_created");
+      if (!resurface) await track("insight_created_library_only");
       await track(imagePath ? (insight.content ? "insight_created_ocr" : "insight_created_photo") : "insight_created_text");
     });
     return insight;
