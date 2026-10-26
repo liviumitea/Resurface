@@ -1,14 +1,16 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
-import { AppState, Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { AppState, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MAX_CATEGORY_NAME_LENGTH, type Category, type Insight } from "../domain";
 import { formatDate, t } from "../i18n";
 import { imageDataUri } from "../media";
 import { palette } from "../theme";
-import { Action, Screen, Surface } from "../ui";
+import { Action, IconButton, Screen, Surface } from "../ui";
 import { screenStyles } from "./styles";
 
-export function InsightImage({ path, height = 260 }: { path: string | null; height?: number }) {
+/** `onOpen`, when given, makes a loaded photo a button that opens it full screen. */
+export function InsightImage({ path, height = 260, onOpen }: { path: string | null; height?: number; onOpen?: () => void }) {
   const [uri, setUri] = useState<string | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "missing" | "error">("loading");
   const [attempt, setAttempt] = useState(0);
@@ -25,7 +27,37 @@ export function InsightImage({ path, height = 260 }: { path: string | null; heig
   if (state === "missing") return <View style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="image-outline" size={28} color={palette.muted} /><Text style={screenStyles.imageMessage}>{t("image.missing")}</Text></View>;
   if (state === "error") return <View style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="alert-circle-outline" size={28} color={palette.muted} /><Text style={screenStyles.imageMessage}>{t("image.error")}</Text><Pressable accessibilityRole="button" accessibilityLabel={t("image.retryLabel")} onPress={() => setAttempt((value) => value + 1)} style={screenStyles.imageRetryTarget}><Text style={screenStyles.imageRetry}>{t("common.tryAgain")}</Text></Pressable></View>;
   if (!uri) return <View accessibilityLabel={t("image.loading")} style={[screenStyles.imagePlaceholder, { height }]}><Ionicons name="image-outline" size={28} color={palette.muted} /></View>;
-  return <Image source={{ uri }} resizeMode="contain" style={[screenStyles.image, { height }]} accessibilityLabel={t("image.label")} />;
+  const image = <Image source={{ uri }} resizeMode="contain" style={[screenStyles.image, { height }]} accessibilityLabel={t("image.label")} />;
+  if (!onOpen) return image;
+  return <Pressable accessibilityRole="imagebutton" accessibilityLabel={t("image.openLabel")} onPress={onOpen}>{image}</Pressable>;
+}
+
+/**
+ * A saved photo full screen, decrypted into memory only. Pinch to zoom (iOS); Close and the
+ * Android back button dismiss it.
+ */
+export function PhotoViewer({ path, onClose }: { path: string | null; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const window = useWindowDimensions();
+  const [uri, setUri] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    setUri(null);
+    setFailed(false);
+    if (path) imageDataUri(path).then((next) => { if (active) { setUri(next); setFailed(!next); } }).catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, [path]);
+  return <Modal visible={!!path} animationType="fade" onRequestClose={onClose} supportedOrientations={["portrait"]}>
+    <View style={screenStyles.viewer} accessibilityViewIsModal onAccessibilityEscape={onClose}>
+      <ScrollView style={screenStyles.flex} contentContainerStyle={screenStyles.viewerContent} maximumZoomScale={4} minimumZoomScale={1} centerContent
+        showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false}>
+        {uri ? <Image source={{ uri }} resizeMode="contain" style={{ width: window.width, height: window.height }} accessibilityLabel={t("image.label")} />
+          : <Text style={screenStyles.viewerMessage} accessibilityLiveRegion="polite">{failed ? t("image.error") : t("image.loading")}</Text>}
+      </ScrollView>
+      <View style={[screenStyles.viewerClose, { top: insets.top + 8 }]}><IconButton icon="close" label={t("image.closeViewer")} onPress={onClose} /></View>
+    </View>
+  </Modal>;
 }
 
 // Decrypted previews live only in memory, capped so a long Library can't hold every photo.
@@ -50,12 +82,12 @@ export function Thumbnail({ path }: { path: string }) {
   return <Image source={{ uri }} resizeMode="cover" style={screenStyles.thumbnail} accessibilityLabel={t("image.thumbLabel")} />;
 }
 
-export function InsightCard({ insight, compact = false }: { insight: Insight; compact?: boolean }) {
+export function InsightCard({ insight, compact = false, onOpenImage }: { insight: Insight; compact?: boolean; onOpenImage?: () => void }) {
   return (
     <Surface style={compact ? screenStyles.compactCard : screenStyles.insightCard}>
       <View style={screenStyles.cardMark}><Ionicons name="sparkles-outline" size={17} color={palette.accentDark} /></View>
       {!!insight.content && <Text style={compact ? screenStyles.cardTextCompact : screenStyles.cardText}>{insight.content}</Text>}
-      <InsightImage path={insight.imagePath} height={compact ? 100 : 250} />
+      <InsightImage path={insight.imagePath} height={compact ? 100 : 250} onOpen={onOpenImage} />
       {!!insight.context && !compact && <Text style={screenStyles.context}>{insight.context}</Text>}
       <Text style={screenStyles.savedDate}>{t("common.savedOn", { date: formatDate(insight.createdAt) })}</Text>
     </Surface>

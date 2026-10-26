@@ -2,9 +2,10 @@ import { useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { MAX_SOURCE_LENGTH, isValidInsight, localDay, type Category, type InsightDetail, type InsightStatus, type Reflection, type ResurfaceEvent } from "../domain";
 import { formatDate, formatDateTime, t, type MessageKey } from "../i18n";
+import type { PhotoSaveStage } from "../media";
 import { palette } from "../theme";
 import { Action, Body, Eyebrow, Header, IconButton, Screen, Title } from "../ui";
-import { CategoryChips, InsightCard } from "./components";
+import { CategoryChips, InsightCard, PhotoViewer } from "./components";
 import { screenStyles } from "./styles";
 
 export type DetailEdit = {
@@ -13,11 +14,29 @@ export type DetailEdit = {
   context: string; setContext: (value: string) => void;
   source: string; setSource: (value: string) => void;
   categoryIds: string[];
+  /** Text read from the photo was just appended to `content`, unsaved. */
+  photoTextAdded: boolean;
 };
 
-export function DetailScreen({ detail, edit, categories, onToggleCategory, onCreateCategory, onSaveEdit, onToggleFavorite, onSnooze, onStatus, onArchive, onDelete, onSaveNote, onRemoveNote, onBack }: {
+/** Work on the saved photo: an add or replacement being saved, or text being read from it. */
+export type DetailPhoto = {
+  /** "saving": a removal is being saved. */
+  stage: PhotoSaveStage | "saving" | null;
+  reading: boolean;
+  slowSeconds: number;
+  /** Asks camera or library, then saves the photo in place of any current one. */
+  onChange: () => void;
+  /** Asks for confirmation first. */
+  onRemove: () => void;
+  /** Reads text from the saved photo into the edit form; nothing is saved until Save changes. */
+  onReadText: () => void;
+  onStopReading: () => void;
+};
+
+export function DetailScreen({ detail, edit, photo, categories, onToggleCategory, onCreateCategory, onSaveEdit, onToggleFavorite, onSnooze, onStatus, onArchive, onDelete, onSaveNote, onRemoveNote, onBack }: {
   detail: InsightDetail;
   edit: DetailEdit;
+  photo: DetailPhoto;
   categories: Category[];
   onToggleCategory: (categoryId: string) => void;
   onCreateCategory: (name: string) => Promise<boolean>;
@@ -38,12 +57,18 @@ export function DetailScreen({ detail, edit, categories, onToggleCategory, onCre
   // The exposure whose note is open for editing, if any.
   const [noteEventId, setNoteEventId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
+  const [viewingPhoto, setViewingPhoto] = useState(false);
+  const imagePath = detail.insight.imagePath;
+  const photoBusy = !!photo.stage || photo.reading;
+  const photoStageLabel = photo.stage === "preparing" ? t("capture.preparingPhoto") : photo.stage === "encrypting" ? t("capture.encryptingPhoto") : null;
   return <Screen>
+    <PhotoViewer path={viewingPhoto ? imagePath : null} onClose={() => setViewingPhoto(false)} />
     <Header title={t("detail.header")} back={onBack}
       right={<IconButton icon={detail.insight.favorite ? "star" : "star-outline"} label={detail.insight.favorite ? t("detail.unfavorite") : t("detail.favorite")} onPress={onToggleFavorite} />} />
     <Eyebrow>{t("detail.eyebrow", { status: t(`detail.status.${detail.insight.status}` as MessageKey), date: formatDate(detail.insight.createdAt) })}</Eyebrow>
     {edit.editing ? <>
       <Title>{t("detail.editTitle")}</Title>
+      {edit.photoTextAdded && <Text accessibilityLiveRegion="polite" style={[screenStyles.photoNote, screenStyles.gapBottom12]}>{t("detailPhoto.textAdded")}</Text>}
       <TextInput multiline textAlignVertical="top" value={edit.content} onChangeText={edit.setContent} placeholder={t("capture.title")} style={screenStyles.captureInput} accessibilityLabel={t("detail.editTextLabel")} />
       <Text style={screenStyles.fieldLabel}>{t("detail.context")}</Text><TextInput multiline textAlignVertical="top" value={edit.context} onChangeText={edit.setContext} style={screenStyles.contextInput} accessibilityLabel={t("detail.editContextLabel")} />
       <Text style={screenStyles.fieldLabel}>{t("capture.sourceLabel")} <Text style={screenStyles.optional}>{t("common.optional")}</Text></Text>
@@ -53,12 +78,24 @@ export function DetailScreen({ detail, edit, categories, onToggleCategory, onCre
       <View style={screenStyles.gap24}><Action label={t("detail.saveChanges")} disabled={!isValidInsight(edit.content, !!detail.insight.imagePath)} onPress={onSaveEdit} /></View>
       <View style={screenStyles.gap12}><Action kind="ghost" label={t("common.cancel")} onPress={() => edit.setEditing(false)} /></View>
     </> : <>
-      <InsightCard insight={detail.insight} />
+      <InsightCard insight={detail.insight} onOpenImage={() => setViewingPhoto(true)} />
       {!!detail.insight.source && <View style={screenStyles.gap12}><Body muted>{t("detail.source", { source: detail.insight.source })}</Body></View>}
       {detail.categories.length > 0 && <View style={[screenStyles.chipWrap, screenStyles.gap12]} accessibilityLabel={t("category.tags", { names: detail.categories.map((category) => category.name).join(", ") })}>
         {detail.categories.map((category) => <View key={category.id} style={[screenStyles.filter, screenStyles.categoryTag]}><Text style={screenStyles.filterText}>{category.name}</Text></View>)}
       </View>}
-      <View style={screenStyles.gap24}><Action kind="secondary" label={t("detail.edit")} icon="create-outline" onPress={() => edit.setEditing(true)} /></View>
+      <View style={screenStyles.gap24}><Action kind="secondary" label={t("detail.edit")} icon="create-outline" disabled={photoBusy} onPress={() => edit.setEditing(true)} /></View>
+      <View style={screenStyles.gap24}><Text maxFontSizeMultiplier={1.8} style={screenStyles.sectionTitle}>{t("detailPhoto.section")}</Text></View>
+      {imagePath ? <>
+        <Action kind="ghost" label={t("detailPhoto.view")} icon="expand-outline" onPress={() => setViewingPhoto(true)} />
+        <View style={screenStyles.gap12}><Action kind="ghost" label={photoStageLabel ?? t("detailPhoto.replace")} icon="images-outline" disabled={photoBusy} onPress={photo.onChange} /></View>
+        <View style={screenStyles.gap12}>{photo.reading
+          ? <Action kind="ghost" label={t("photo.stopExtracting")} onPress={photo.onStopReading} />
+          : <Action kind="ghost" label={t("detailPhoto.readText")} icon="text-outline" disabled={photoBusy} onPress={photo.onReadText} />}</View>
+        {photo.reading && photo.slowSeconds >= 3 && <Text accessibilityLiveRegion="polite" style={screenStyles.slowNote}>{t("detailPhoto.readSlow", { seconds: photo.slowSeconds })}</Text>}
+        <View style={screenStyles.gap12}><Action kind="danger" label={t("detailPhoto.remove")} disabled={photoBusy || !detail.insight.content?.trim()} onPress={photo.onRemove} /></View>
+        {!detail.insight.content?.trim() && <Text style={screenStyles.photoNote}>{t("detailPhoto.removeNeedsText")}</Text>}
+      </> : <Action kind="ghost" label={photoStageLabel ?? t("detailPhoto.add")} icon="image-outline" disabled={photoBusy} onPress={photo.onChange} />}
+      {!!photo.stage && photo.slowSeconds >= 3 && <Text accessibilityLiveRegion="polite" style={screenStyles.slowNote}>{t("capture.photoSlow", { seconds: photo.slowSeconds })}</Text>}
       {detail.insight.status === "active" && (() => {
         const next = detail.events.find((event) => !event.shownAt && !event.cancelledAt);
         return <>

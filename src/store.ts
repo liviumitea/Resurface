@@ -61,6 +61,15 @@ export class CategoryError extends Error {
   }
 }
 
+/** `empty`: the change would leave an insight with neither text nor photo. `changed`: its photo changed meanwhile. */
+export type PhotoProblem = "empty" | "missing" | "changed";
+export class PhotoError extends Error {
+  constructor(readonly problem: PhotoProblem, message: string) {
+    super(message);
+    this.name = "PhotoError";
+  }
+}
+
 export type BetaMetrics = {
   firstSaveAt: string | null;
   coreLoopAt: string | null;
@@ -433,8 +442,42 @@ export function createStore({ db, id, now }: StoreDependencies) {
     });
   }
 
+  /** Refuses (`PhotoError` "empty") to clear the text of an insight that has no photo, checked in the same statement. */
   async function editInsight(insightId: string, content: string | null, context: string | null, source: string | null = null): Promise<void> {
-    await db().runAsync("UPDATE insights SET content = ?, context = ?, source = ?, updatedAt = ? WHERE id = ?", content?.trim() || null, context?.trim() || null, cleanSource(source), now().toISOString(), insightId);
+    const text = content?.trim() || null;
+    const result = await db().runAsync("UPDATE insights SET content = ?, context = ?, source = ?, updatedAt = ? WHERE id = ? AND (? IS NOT NULL OR imagePath IS NOT NULL)",
+      text, context?.trim() || null, cleanSource(source), now().toISOString(), insightId, text);
+    if (!result.changes && await getInsight(insightId)) throw new PhotoError("empty", "An insight without a photo needs text.");
+  }
+
+  /**
+   * Points an insight at a new encrypted photo, or at none. Returns the previous photo path for the
+   * caller to delete once this has succeeded; the caller owns the new file and removes it on failure.
+   * A photo-only insight keeps its photo. This is an edit, not a response: the schedule is unchanged.
+   */
+  async function setInsightImage(insightId: string, imagePath: string | null): Promise<{ previous: string | null }> {
+    const insight = await getInsight(insightId);
+    if (!insight) throw new PhotoError("missing", "This insight no longer exists.");
+    const previous = insight.imagePath;
+    // One conditional statement, because expo-sqlite lets other queries run inside a transaction:
+    // it applies only if the photo is still the one read above and, for a removal, text remains.
+    const result = await db().runAsync(
+      "UPDATE insights SET imagePath = ?, imageMime = ?, updatedAt = ? WHERE id = ? AND imagePath IS ? AND (? IS NOT NULL OR trim(coalesce(content, '')) <> '')",
+      imagePath, imagePath ? "image/jpeg" : null, now().toISOString(), insightId, previous, imagePath,
+    );
+    if (!result.changes) {
+      const current = await getInsight(insightId);
+      if (!current) throw new PhotoError("missing", "This insight no longer exists.");
+      if (!imagePath && current.imagePath === previous) throw new PhotoError("empty", "A photo-only insight needs text before its photo can be removed.");
+      throw new PhotoError("changed", "The photo changed meanwhile; nothing was updated.");
+    }
+    await track(!imagePath ? "photo_removed" : previous ? "photo_replaced" : "photo_added");
+    return { previous };
+  }
+
+  /** Each insight with the photo it refers to, if any, for finding superseded photo files. */
+  async function listPhotoReferences(): Promise<{ id: string; imagePath: string | null }[]> {
+    return db().getAllAsync<{ id: string; imagePath: string | null }>("SELECT id, imagePath FROM insights");
   }
 
   /** Stars or unstars an insight; this is not a response and does not affect resurfacing. */
@@ -577,7 +620,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
     listCategories, createCategory, renameCategory, deleteCategory, setInsightCategories, setFavorite,
     track, getSettings, saveSettings, insertInsight, countInsights, listInsights, getInsight, getEvent,
     getDetail, selectToday, listUpcoming, markShown, markOpened, markCompleted, respondToEvent, setReflectionNote, setInsightStatus, snoozeInsight,
-    editInsight, deleteInsightRow, markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics,
+    editInsight, setInsightImage, listPhotoReferences, deleteInsightRow, markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics,
     notificationCandidates, clearFutureNotificationPlans, setNotificationPlan,
   };
 }

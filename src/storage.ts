@@ -9,13 +9,13 @@ import {
 } from "./backup";
 import type { Insight } from "./domain";
 import {
-  IMAGE_DIRECTORY_NAME, IMAGE_KEY_NAME, deleteEncryptedImage, deleteUnreferencedImages, encryptImageFromUri,
+  IMAGE_DIRECTORY_NAME, IMAGE_KEY_NAME, deleteEncryptedImage, deleteImagesOwnedBy, deleteSupersededImages, deleteUnreferencedImages, encryptImageFromUri,
   readImageBytes, writeEncryptedImage, type PhotoSaveStage,
 } from "./media";
 import { MigrationError, runMigrations } from "./migrations";
 import { createStore } from "./store";
 
-export { CategoryError } from "./store";
+export { CategoryError, PhotoError } from "./store";
 export type { BackupStatus, BetaMetrics, NotificationCandidate } from "./store";
 
 const DATABASE_KEY_NAME = "resurface.database-key.v1";
@@ -108,9 +108,44 @@ export async function createInsight(
   }
 }
 
+/**
+ * Attaches a photo to a saved insight, replacing any it has. The new photo is encrypted to a new
+ * file before the database refers to it; the old file is deleted only after that update succeeds.
+ * On failure the new file is removed and the insight keeps its current photo.
+ */
+export async function setInsightPhoto(insightId: string, imageUri: string, onPhotoStage?: (stage: PhotoSaveStage) => void): Promise<void> {
+  const imagePath = await encryptImageFromUri(imageUri, `${insightId}-${id()}`, onPhotoStage);
+  let previous: string | null;
+  try {
+    ({ previous } = await store.setInsightImage(insightId, imagePath));
+  } catch (error) {
+    deleteEncryptedImage(imagePath);
+    throw error;
+  }
+  removePhotoFile(previous);
+}
+
+/** Detaches and deletes an insight's photo; refused (`PhotoError` "empty") when it has no text. */
+export async function removeInsightPhoto(insightId: string): Promise<void> {
+  const { previous } = await store.setInsightImage(insightId, null);
+  removePhotoFile(previous);
+}
+
+/** The database no longer refers to this file; if deleting it fails, the next launch's sweep does. */
+function removePhotoFile(path: string | null): void {
+  try { deleteEncryptedImage(path); } catch { /* See removeSupersededPhotos. */ }
+}
+
+/** Run at launch, after opening storage: removes photo files left behind by an interrupted replacement. */
+export async function removeSupersededPhotos(): Promise<void> {
+  deleteSupersededImages(await store.listPhotoReferences());
+}
+
 export async function deleteInsight(insightId: string): Promise<void> {
   const deleted = await store.deleteInsightRow(insightId);
-  if (deleted) deleteEncryptedImage(deleted.imagePath);
+  if (!deleted) return;
+  // Also any file a replacement left behind: once the row is gone, the launch sweep can't tell it is ours.
+  try { deleteEncryptedImage(deleted.imagePath); } finally { deleteImagesOwnedBy(insightId); }
 }
 
 /**

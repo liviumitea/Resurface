@@ -6,12 +6,13 @@ import { Alert, AppState, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { MAX_CATEGORY_NAME_LENGTH, addCalendarDays, isValidInsight, shouldAskValueFeedback, type CategoryWithCount, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
 import { resolveLanguage, setLanguage, t, type MessageKey } from "./src/i18n";
-import { clearTransientCaches, deletePickedImageFromCache, isTextRecognitionSupported, recognizeText, type PhotoSaveStage } from "./src/media";
+import { clearTransientCaches, deletePickedImageFromCache, isTextRecognitionSupported, recognizeText, withDecryptedImageFile, type PhotoSaveStage } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
   countInsights, createInsight, deleteInsight, editInsight, getBetaMetrics, getDetail, getEvent, getInsight, getSettings, getShownCount,
   markCompleted, markValueFeedbackAsked, markOpened, markShown, openStorage, respondToEvent, setReflectionNote, setAsideUnreadableData, snoozeInsight, StorageError,
   CategoryError, createCategory, deleteCategory, listCategories, renameCategory, setFavorite, setInsightCategories,
+  PhotoError, removeInsightPhoto, removeSupersededPhotos, setInsightPhoto,
   type BetaMetrics, type StorageFailure, listUpcoming, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
 } from "./src/storage";
 import type { UpcomingList } from "./src/store";
@@ -58,12 +59,15 @@ function ResurfaceApp() {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [editContext, setEditContext] = useState("");
+  const [editPhotoText, setEditPhotoText] = useState(false);
   const [captureOrigin, setCaptureOrigin] = useState<CaptureOrigin>("today");
   const [captureContent, setCaptureContent] = useState("");
   const [captureContext, setCaptureContext] = useState("");
   const [captureImageUri, setCaptureImageUri] = useState<string | null>(null);
   const [ocrBusy, setOcrBusy] = useState(false);
   const ocrAttempt = useRef(0);
+  // Aborting deletes the decrypted copy that text recognition of a saved photo reads.
+  const ocrAbort = useRef<AbortController | null>(null);
   const [saveStage, setSaveStage] = useState<PhotoSaveStage | "saving" | null>(null);
   // Seconds since a photo save or text extraction started, shown once it is noticeably slow.
   const [slowSeconds, setSlowSeconds] = useState(0);
@@ -136,6 +140,7 @@ function ResurfaceApp() {
     setDetail(found);
     setDetailOrigin(origin);
     setEditing(false);
+    setEditPhotoText(false);
     setEditContent(found.insight.content ?? "");
     setEditContext(found.insight.context ?? "");
     setEditCategoryIds(found.categories.map((category) => category.id));
@@ -160,6 +165,8 @@ function ResurfaceApp() {
       try {
         clearTransientCaches();
         await openStorage();
+        // Best effort: photo files an interrupted replacement left behind are ciphertext only.
+        await removeSupersededPhotos().catch(() => undefined);
         const nextSettings = await getSettings();
         if (!live) return;
         setLanguage(resolveLanguage(nextSettings.language));
@@ -298,20 +305,26 @@ function ResurfaceApp() {
     else void goToday();
   };
 
-  const pickImage = async (source: "camera" | "library") => {
+  /** The picked photo's cache URI, or null if cancelled or unavailable (which is explained). */
+  const launchPicker = async (source: "camera" | "library") => {
     try {
       const options: ImagePicker.ImagePickerOptions = { mediaTypes: ["images"], quality: 1 };
       const result = source === "camera"
         ? await ImagePicker.launchCameraAsync(options)
         : await ImagePicker.launchImageLibraryAsync(options);
-      if (!result.canceled && result.assets[0]) {
-        deletePickedImageFromCache(captureImageUri);
-        setCaptureImageUri(result.assets[0].uri);
-        setRoute("photo");
-      }
+      return !result.canceled && result.assets[0] ? result.assets[0].uri : null;
     } catch {
       Alert.alert(t("capture.photoUnavailableTitle"), t("capture.photoUnavailableBody"));
+      return null;
     }
+  };
+
+  const pickImage = async (source: "camera" | "library") => {
+    const uri = await launchPicker(source);
+    if (!uri) return;
+    deletePickedImageFromCache(captureImageUri);
+    setCaptureImageUri(uri);
+    setRoute("photo");
   };
 
   const chooseCapture = (source: "write" | "camera" | "library") => {
@@ -341,7 +354,7 @@ function ResurfaceApp() {
     } finally { if (attempt === ocrAttempt.current) setOcrBusy(false); }
   };
 
-  const cancelPhotoText = () => { ocrAttempt.current += 1; setOcrBusy(false); };
+  const cancelPhotoText = () => { ocrAttempt.current += 1; ocrAbort.current?.abort(); ocrAbort.current = null; setOcrBusy(false); };
 
   const saveCapture = async () => {
     if (!isValidInsight(captureContent, !!captureImageUri) || busy) return;
@@ -474,7 +487,103 @@ function ResurfaceApp() {
       setEditing(false);
       await openDetail(detail.insight.id, detailOrigin);
       if (settings) await reconcileNotifications(settings);
-    } catch (error) { report(error); }
+    } catch (error) {
+      // The photo was removed meanwhile, so the text can't be cleared; the form keeps what was typed.
+      if (error instanceof PhotoError) {
+        Alert.alert("Resurface", t("common.genericErrorUnchanged"));
+        const fresh = await getDetail(detail.insight.id).catch(() => null);
+        if (fresh) setDetail(fresh);
+      }
+      else report(error);
+    }
+  };
+
+  /** Leaves the edit form without saving, so a later Edit starts from what is stored. */
+  const cancelEdit = () => {
+    setEditing(false);
+    setEditPhotoText(false);
+    if (!detail) return;
+    setEditContent(detail.insight.content ?? "");
+    setEditContext(detail.insight.context ?? "");
+    setEditSource(detail.insight.source ?? "");
+    setEditCategoryIds(detail.categories.map((category) => category.id));
+  };
+
+  const changeDetailPhoto = () => {
+    if (!detail) return;
+    const replacing = !!detail.insight.imagePath;
+    const pick = (source: "camera" | "library") => () => { void attachDetailPhoto(source); };
+    Alert.alert(t(replacing ? "detailPhoto.replaceTitle" : "detailPhoto.addTitle"), t(replacing ? "detailPhoto.replaceBody" : "detailPhoto.addBody"), [
+      { text: t("choice.takePhoto"), onPress: pick("camera") },
+      { text: t("choice.choosePhoto"), onPress: pick("library") },
+      { text: t("common.cancel"), style: "cancel" },
+    ]);
+  };
+
+  // The new photo is saved straight away: choosing it in the picker is the confirmation.
+  const attachDetailPhoto = async (source: "camera" | "library") => {
+    if (!detail || busy) return;
+    const insightId = detail.insight.id;
+    const uri = await launchPicker(source);
+    if (!uri) return;
+    setBusy(true);
+    setSaveStage("preparing");
+    try {
+      await setInsightPhoto(insightId, uri, setSaveStage);
+      if (routeRef.current === "detail") await openDetail(insightId, detailOrigin);
+    } catch {
+      Alert.alert(t("detailPhoto.failedTitle"), t("detailPhoto.failedBody"));
+    } finally {
+      deletePickedImageFromCache(uri);
+      setBusy(false);
+      setSaveStage(null);
+    }
+  };
+
+  const confirmRemoveDetailPhoto = () => {
+    if (!detail) return;
+    const insightId = detail.insight.id;
+    Alert.alert(t("detailPhoto.removeTitle"), t("detailPhoto.removeBody"), [
+      { text: t("common.cancel"), style: "cancel" },
+      { text: t("detailPhoto.remove"), style: "destructive", onPress: () => {
+        void (async () => {
+          if (busy) return;
+          setBusy(true);
+          setSaveStage("saving");
+          try {
+            await removeInsightPhoto(insightId);
+            if (routeRef.current === "detail") await openDetail(insightId, detailOrigin);
+          } catch (error) {
+            Alert.alert("Resurface", t(error instanceof PhotoError && error.problem === "empty" ? "detailPhoto.removeNeedsText" : "common.genericErrorUnchanged"));
+          } finally { setBusy(false); setSaveStage(null); }
+        })();
+      } },
+    ]);
+  };
+
+  // Recognised text goes into the edit form after what is already saved; only Save changes stores it.
+  const readDetailPhotoText = async () => {
+    const path = detail?.insight.imagePath;
+    if (!detail || !path || ocrBusy) return;
+    if (!isTextRecognitionSupported) { Alert.alert(t("ocr.unavailableTitle"), t("detailPhoto.readError")); return; }
+    const attempt = ++ocrAttempt.current;
+    const abort = new AbortController();
+    ocrAbort.current = abort;
+    setOcrBusy(true);
+    try {
+      const text = await withDecryptedImageFile(path, recognizeText, abort.signal);
+      if (attempt !== ocrAttempt.current || routeRef.current !== "detail") return;
+      if (!text) { Alert.alert(t("ocr.failedTitle"), t("detailPhoto.readEmpty")); return; }
+      const saved = detail.insight.content?.trim() ?? "";
+      setEditContent(saved ? `${saved}\n\n${text}` : text);
+      setEditContext(detail.insight.context ?? "");
+      setEditSource(detail.insight.source ?? "");
+      setEditCategoryIds(detail.categories.map((category) => category.id));
+      setEditPhotoText(true);
+      setEditing(true);
+    } catch {
+      if (attempt === ocrAttempt.current) Alert.alert(t("ocr.failedTitle"), t("detailPhoto.readError"));
+    } finally { if (attempt === ocrAttempt.current) { ocrAbort.current = null; setOcrBusy(false); } }
   };
 
   const saveNote = async (eventId: string, text: string) => {
@@ -569,6 +678,7 @@ function ResurfaceApp() {
   const startReflection = (eventId: string | null) => { setRevisitEventId(eventId); setReflectionText(""); setRoute("reflect"); };
 
   const leaveDetail = () => {
+    cancelPhotoText();
     if (detailOrigin === "library") goLibrary();
     else if (detailOrigin === "upcoming") void goUpcoming();
     else if (firstSave && !settings.permissionAsked) setRoute("permission");
@@ -634,7 +744,10 @@ function ResurfaceApp() {
       onManageCategories={() => setRoute("categories")} onToday={() => { void goToday(); }} onCaptureChoice={() => openCaptureChoice("library")} onLibrary={goLibrary} />}
 
     {route === "detail" && detail && <DetailScreen detail={detail}
-      edit={{ editing, setEditing, content: editContent, setContent: setEditContent, context: editContext, setContext: setEditContext, source: editSource, setSource: setEditSource, categoryIds: editCategoryIds }}
+      edit={{ editing, setEditing: (value) => { if (value) setEditing(true); else cancelEdit(); }, content: editContent, setContent: setEditContent, context: editContext, setContext: setEditContext,
+        source: editSource, setSource: setEditSource, categoryIds: editCategoryIds, photoTextAdded: editPhotoText }}
+      photo={{ stage: route === "detail" ? saveStage : null, reading: ocrBusy, slowSeconds,
+        onChange: changeDetailPhoto, onRemove: confirmRemoveDetailPhoto, onReadText: () => { void readDetailPhotoText(); }, onStopReading: cancelPhotoText }}
       categories={categories}
       onToggleCategory={(categoryId) => setEditCategoryIds((ids) => toggle(ids, categoryId))}
       onCreateCategory={(name) => addCategory(name, (categoryId) => setEditCategoryIds((ids) => [...ids, categoryId]))}

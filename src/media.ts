@@ -7,6 +7,7 @@ import { extractTextFromImage, isSupported as textExtractorSupported } from "exp
 import { Image } from "react-native";
 import ResurfaceImage from "../modules/resurface-image";
 import { BACKUP_EXTENSION } from "./backup";
+import { supersededPhotoFiles } from "./domain";
 
 export const IMAGE_KEY_NAME = "resurface.image-key.v1";
 export const IMAGE_DIRECTORY_NAME = "resurface-images";
@@ -137,6 +138,48 @@ export function deleteUnreferencedImages(referencedPaths: (string | null)[]): vo
     if (entry instanceof File && entry.name.endsWith(".enc") && !referenced.has(entry.name)) {
       try { entry.delete(); } catch { /* Best effort; an orphan is ciphertext only. */ }
     }
+  }
+}
+
+/** Removes photo files an insight has stopped referring to; see `supersededPhotoFiles`. */
+export function deleteSupersededImages(insights: { id: string; imagePath: string | null }[]): void {
+  const files = imageDirectory().list().filter((entry): entry is File => entry instanceof File);
+  const superseded = new Set(supersededPhotoFiles(files.map((file) => file.name), insights));
+  for (const file of files) {
+    if (!superseded.has(file.name)) continue;
+    try { file.delete(); } catch { /* Retried at the next launch; an orphan is ciphertext only. */ }
+  }
+}
+
+/**
+ * Runs `task` on a temporary decrypted JPEG copy of a saved photo, for text recognition, which needs
+ * a file. The copy is deleted when `task` settles or as soon as `signal` aborts (native recognition
+ * can't be cancelled, so it may keep running without it), and is swept at launch otherwise.
+ */
+export async function withDecryptedImageFile<T>(encryptedPath: string, task: (uri: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const plaintext = await readImageBytes(encryptedPath);
+  if (!plaintext) throw new Error("The photo isn't on this device.");
+  if (signal?.aborted) throw new Error("Cancelled.");
+  const directory = new Directory(Paths.cache, PREPARED_DIRECTORY);
+  directory.create({ idempotent: true, intermediates: true });
+  const file = new File(directory, `${randomUUID()}.jpg`);
+  const remove = () => { try { if (file.exists) file.delete(); } catch { /* Swept at the next launch. */ } };
+  signal?.addEventListener("abort", remove);
+  try {
+    file.create({ overwrite: true });
+    file.write(plaintext);
+    return await task(file.uri);
+  } finally {
+    signal?.removeEventListener("abort", remove);
+    remove();
+  }
+}
+
+/** Deletes every photo file named after an insight (`<id>.enc`, `<id>-<suffix>.enc`), once its row is gone. */
+export function deleteImagesOwnedBy(insightId: string): void {
+  for (const entry of imageDirectory().list()) {
+    if (!(entry instanceof File) || !(entry.name === `${insightId}.enc` || (entry.name.startsWith(`${insightId}-`) && entry.name.endsWith(".enc")))) continue;
+    try { entry.delete(); } catch { /* Best effort; an orphan is ciphertext only. */ }
   }
 }
 

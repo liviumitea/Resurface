@@ -131,6 +131,25 @@ export function upcomingTiming(scheduledAt: string, clock: Date): UpcomingTiming
   return { kind: "date", at: scheduledAt };
 }
 
+/**
+ * Encrypted photo files that an existing insight no longer refers to, which a replacement
+ * interrupted between the database update and deleting the old file can leave. Only files named
+ * after an insight that still exists count (`<insight id>.enc` or `<insight id>-<suffix>.enc`), so photos left by a database that could not be opened are never mistaken for leftovers.
+ */
+export function supersededPhotoFiles(fileNames: string[], insights: { id: string; imagePath: string | null }[]): string[] {
+  const owners = new Set(insights.map((insight) => insight.id));
+  const referenced = new Set(insights.map((insight) => insight.imagePath?.split("/").pop()).filter(Boolean));
+  return fileNames.filter((name) => {
+    if (!name.endsWith(".enc") || referenced.has(name)) return false;
+    const stem = name.slice(0, -".enc".length);
+    if (owners.has(stem)) return true;
+    for (let dash = stem.indexOf("-"); dash >= 0; dash = stem.indexOf("-", dash + 1)) {
+      if (owners.has(stem.slice(0, dash))) return true;
+    }
+    return false;
+  });
+}
+
 export function isValidInsight(content: string | null, hasImage: boolean): boolean {
   return Boolean(content?.trim()) || hasImage;
 }

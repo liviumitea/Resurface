@@ -6,7 +6,7 @@ export const TIME_PRESETS = ["07:00", "09:00", "12:00", "18:00", "21:00"] as con
 export const WEEK_FROM_MONDAY = [1, 2, 3, 4, 5, 6, 0] as const;
 
 export const screenStyles = StyleSheet.create({
-  flex: { flex: 1 }, row: { flexDirection: "row", gap: 10 }, gap12: { marginTop: 12 }, gap24: { marginTop: 24 },
+  flex: { flex: 1 }, row: { flexDirection: "row", gap: 10 }, gap12: { marginTop: 12 }, gap24: { marginTop: 24 }, gapBottom12: { marginBottom: 12 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 28 },
   loadingMark: { width: 90, height: 90, borderRadius: 30, backgroundColor: palette.accent, alignItems: "center", justifyContent: "center" },
   loadingText: { color: palette.muted, marginTop: 24, fontSize: 16 },
@@ -55,5 +55,9 @@ export const screenStyles = StyleSheet.create({
   switchRow: { flexDirection: "row", alignItems: "center", gap: 14, marginTop: 16 }, switchTitle: { color: palette.ink, fontWeight: "700", fontSize: 15 }, switchDescription: { color: palette.muted, fontSize: 12, lineHeight: 18, marginTop: 3 },
   helpItem: { marginBottom: 10 },
   backupHint: { color: palette.danger, fontSize: 13, marginTop: 8 },
+  viewer: { flex: 1, backgroundColor: "#000000" }, viewerContent: { flexGrow: 1, alignItems: "center", justifyContent: "center" },
+  viewerMessage: { color: "#FFFFFF", fontSize: 15, textAlign: "center", padding: 24 },
+  viewerClose: { position: "absolute", right: 16 },
+  photoNote: { color: palette.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },
   modalBackdrop: { flex: 1, backgroundColor: "#14221ACC", justifyContent: "center", padding: 24 }, feedbackBox: { padding: 24 }, feedbackTitle: { color: palette.ink, fontSize: 26, lineHeight: 33, fontWeight: "700", marginBottom: 10 },
 });
