@@ -18,6 +18,7 @@ deleting insights in the app or by removing the app.
 | Insights, context notes, sources, categories, favorites, reflections and resurfacing history | A database on your device | Encrypted (SQLCipher) with a random key held in the iOS Keychain / Android Keystore |
 | Photos you attach | Files in the app's private storage | Each encrypted (AES-GCM) with a random key held in the Keychain / Keystore |
 | Settings (frequency, reminder time, quiet days, language, notification text preference) | The same encrypted database | As above |
+| An unfinished insight you haven't saved yet (its text, context, source, categories and resurfacing choice, not a photo) | The same encrypted database | As above. It is not included in backups and is deleted when you save the insight or discard the draft |
 | Usage counters (for example "insight created", "reminder opened", "backup verified") with their times | The same encrypted database | As above. They never contain your text and are not sent anywhere; Settings shows a summary to you |
 
 While you are saving a photo, the camera, photo picker or share extension can leave a temporary unencrypted
@@ -53,7 +54,8 @@ only as an unsaved draft until you tap Save.
 
 ## Deleting your data
 
-Deleting an insight removes it, its photo and its history from the device. Removing the app deletes all of
+Deleting an insight removes it, its photo and its history from the device. Discarding an unfinished draft
+deletes it from the device; it can't be recovered. Removing the app deletes all of
 its data and keys. Backup files you saved elsewhere stay where you put them until you delete them.
 
 ## Children
@@ -76,8 +78,9 @@ cloud. Aplicația nu ne trimite nouă sau altcuiva ideile, fotografiile, notițe
 Poți șterge totul ștergând ideile din aplicație sau dezinstalând aplicația.
 
 **Ce se păstrează și unde.** Ideile, notițele, sursele, categoriile, favoritele, reflecțiile, istoricul,
-setările și contoarele de utilizare (de exemplu „idee salvată”, fără textul tău) sunt într-o bază de date
-criptată pe dispozitiv. Fotografiile sunt fișiere criptate în spațiul privat al aplicației. Cheile sunt
+setările, ciorna unei idei încă nesalvate (text și detalii, fără fotografie; nu intră în backup și se șterge
+când salvezi ideea sau renunți la ciornă) și contoarele de utilizare (de exemplu „idee salvată”, fără textul
+tău) sunt într-o bază de date criptată pe dispozitiv. Fotografiile sunt fișiere criptate în spațiul privat al aplicației. Cheile sunt
 aleatorii și păstrate în iOS Keychain / Android Keystore. Cât timp salvezi o fotografie, camera, selectorul
 de fotografii sau extensia de partajare pot lăsa o copie temporară necriptată în memoria cache a aplicației;
 aplicația o șterge după salvare sau anulare și golește aceste foldere la fiecare pornire. Conținutul partajat

@@ -4,15 +4,15 @@ import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, AppState, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { MAX_CATEGORY_NAME_LENGTH, addCalendarDays, isValidInsight, shouldAskValueFeedback, type CategoryWithCount, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
-import { resolveLanguage, setLanguage, t, type MessageKey } from "./src/i18n";
+import { MAX_CATEGORY_NAME_LENGTH, addCalendarDays, draftHasContent, type StoredDraft, isValidInsight, shouldAskValueFeedback, type CategoryWithCount, type Insight, type InsightDetail, type InsightStatus, type Settings, type TodayItem } from "./src/domain";
+import { formatDate, resolveLanguage, setLanguage, t, type MessageKey } from "./src/i18n";
 import { clearTransientCaches, deletePickedImageFromCache, isTextRecognitionSupported, recognizeText, withDecryptedImageFile, type PhotoSaveStage } from "./src/media";
 import { notificationEventId, reconcileNotifications, requestNotificationPermission } from "./src/notifications";
 import {
   countInsights, createInsight, deleteInsight, editInsight, getBetaMetrics, getDetail, getEvent, getInsight, getSettings, getShownCount,
   markCompleted, markValueFeedbackAsked, markOpened, markShown, openStorage, respondToEvent, setReflectionNote, setAsideUnreadableData, snoozeInsight, StorageError,
   CategoryError, createCategory, deleteCategory, listCategories, renameCategory, setFavorite, setInsightCategories,
-  PhotoError, removeInsightPhoto, removeSupersededPhotos, setInsightPhoto,
+  PhotoError, removeInsightPhoto, removeSupersededPhotos, setInsightPhoto, getCaptureDraft, saveCaptureDraft, clearCaptureDraft,
   type BetaMetrics, type StorageFailure, listUpcoming, saveSettings, saveValueFeedback, selectToday, setInsightStatus, track,
 } from "./src/storage";
 import type { UpcomingList } from "./src/store";
@@ -66,6 +66,15 @@ function ResurfaceApp() {
   const [captureImageUri, setCaptureImageUri] = useState<string | null>(null);
   const [captureResurface, setCaptureResurface] = useState(true);
   const [savedResurface, setSavedResurface] = useState(true);
+  // The capture draft kept in the encrypted database (SCRUM-59), mirrored in a ref for the share hook.
+  const [storedDraft, setStoredDraftState] = useState<StoredDraft | "unreadable" | null>(null);
+  const storedDraftRef = useRef<StoredDraft | "unreadable" | null>(null);
+  const setStoredDraft = (value: StoredDraft | "unreadable" | null) => { storedDraftRef.current = value; setStoredDraftState(value); };
+  const [draftSaveFailed, setDraftSaveFailed] = useState(false);
+  // Draft writes run one after another, so an earlier write can never land after a clear.
+  const draftQueue = useRef<Promise<void>>(Promise.resolve());
+  // Only a capture started in this session is written; a Save or Discard stops it until the next one.
+  const draftActive = useRef(false);
   const [ocrBusy, setOcrBusy] = useState(false);
   const ocrAttempt = useRef(0);
   // Aborting deletes the decrypted copy that text recognition of a saved photo reads.
@@ -174,6 +183,8 @@ function ResurfaceApp() {
         setLanguage(resolveLanguage(nextSettings.language));
         setSettings(nextSettings);
         setInsightCount(await countInsights());
+        // A draft that can't be read is reported, never overwritten; a failed read only hides the notice.
+        try { setStoredDraft(await getCaptureDraft()); } catch { setStoredDraft("unreadable"); }
         if (nextSettings.onboardingComplete) await goToday();
         else { setRoute("onboarding"); await track("onboarding_started"); }
         if (live) setReady(true);
@@ -219,12 +230,37 @@ function ResurfaceApp() {
     });
     return () => subscription.remove();
   }, [goUpcoming]);
+
+  // The capture draft is kept shortly after each change, and at once when the app leaves the foreground.
+  const capturing = route === "capture" || route === "photo";
+  useEffect(() => {
+    if (!capturing || !draftActive.current) return;
+    const timer = setTimeout(() => { void persistDraft(); }, 700);
+    return () => clearTimeout(timer);
+  // persistDraft reads the latest fields through a ref.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capturing, captureContent, captureContext, captureSource, captureCategoryIds, captureResurface, captureImageUri]);
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active" && (routeRef.current === "capture" || routeRef.current === "photo")) void persistDraft();
+    });
+    return () => subscription.remove();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const draftRef = useRef({ content: "", imageUri: null as string | null });
   draftRef.current = { content: captureContent, imageUri: captureImageUri };
+  const captureFieldsRef = useRef<Omit<StoredDraft, "savedAt">>({ content: "", context: "", source: "", categoryIds: [], resurface: true, origin: "today", hadPhoto: false });
+  captureFieldsRef.current = {
+    content: captureContent, context: captureContext, source: captureSource, categoryIds: captureCategoryIds, resurface: captureResurface,
+    origin: captureOrigin, hadPhoto: !!captureImageUri,
+  };
   useSharedContent({
     enabled: ready && !fatalError && !!settings,
-    hasUnsavedDraft: () => (routeRef.current === "capture" || routeRef.current === "photo") && (!!draftRef.current.content.trim() || !!draftRef.current.imageUri),
+    hasUnsavedDraft: () => !!storedDraftRef.current
+      || ((routeRef.current === "capture" || routeRef.current === "photo") && (draftHasContent(captureFieldsRef.current) || !!draftRef.current.imageUri)),
     openDraft: (draft, imageUri) => {
+      // Reached only with no draft, or after the user chose to replace it.
+      discardDraft();
       beginCapture(settingsRef.current?.onboardingComplete ? "today" : "onboarding");
       setCaptureContent(draft.content);
       setCaptureSource(draft.source ?? "");
@@ -295,12 +331,95 @@ function ResurfaceApp() {
     setCaptureCategoryIds([]);
     setCaptureSource("");
     setCaptureResurface(true);
+    setDraftSaveFailed(false);
+    draftActive.current = true;
     setRoute("capture");
   };
 
+  /** Writes (or clears) the draft from what is on the capture screen now. */
+  const persistDraft = () => {
+    if (!draftActive.current) return draftQueue.current;
+    const fields = captureFieldsRef.current;
+    // Known at once, so a capture started before the write lands still offers this draft back.
+    setStoredDraft(draftHasContent(fields) ? { ...fields, savedAt: new Date().toISOString() } : null);
+    draftQueue.current = draftQueue.current.then(async () => {
+      if (!draftActive.current) return;
+      try {
+        await saveCaptureDraft(fields);
+        if (!draftActive.current) { await clearCaptureDraft(); return; }
+        setDraftSaveFailed(false);
+      } catch { setDraftSaveFailed(true); }
+    });
+    return draftQueue.current;
+  };
+
+  /** Stops keeping the current capture and deletes the stored draft (after Save, Discard or a replacing share). */
+  const discardDraft = (counter?: string) => {
+    draftActive.current = false;
+    const previous = storedDraftRef.current;
+    setStoredDraft(null);
+    const done = draftQueue.current.then(async () => {
+      try {
+        await clearCaptureDraft();
+        setDraftSaveFailed(false);
+        if (counter) await track(counter).catch(() => undefined);
+        return true;
+      } catch {
+        // Still stored: offer it again and say so, rather than act as if it were gone.
+        setStoredDraft(previous);
+        Alert.alert("Resurface", t("draft.discardFailed"));
+        return false;
+      }
+    });
+    draftQueue.current = done.then(() => undefined);
+    return done;
+  };
+
+  // Read again so categories deleted (or replaced by a restore) since the draft was loaded are dropped.
+  const resumeDraft = async (loaded: StoredDraft) => {
+    const fresh = await getCaptureDraft().catch(() => "failed" as const);
+    // Discarded or saved meanwhile: nothing to resume, and the old copy must not be written back.
+    if (fresh === null && !draftSaveFailed) { setStoredDraft(null); return; }
+    if (fresh === "unreadable") { setStoredDraft("unreadable"); return; }
+    const draft = fresh && fresh !== "failed" ? fresh : loaded;
+    beginCapture(draft.origin === "onboarding" && settingsRef.current?.onboardingComplete ? "today" : draft.origin);
+    setCaptureContent(draft.content);
+    setCaptureContext(draft.context);
+    setCaptureSource(draft.source);
+    setCaptureCategoryIds(draft.categoryIds);
+    setCaptureResurface(draft.resurface);
+    void track("draft_resumed").catch(() => undefined);
+    if (draft.hadPhoto) Alert.alert(t("draft.photoNotKeptTitle"), t("draft.photoNotKeptBody"));
+  };
+
+  const confirmDiscardDraft = () => {
+    Alert.alert(t("draft.discardTitle"), t("draft.discardBody"), [
+      { text: t("common.cancel"), style: "cancel" },
+      { text: t("draft.discard"), style: "destructive", onPress: () => { void discardDraft("draft_discarded"); } },
+    ]);
+  };
+
+  /** Before a new capture replaces it, a kept draft is offered back: resume it, or discard it for good. */
+  const withDraftCheck = (proceed: () => void) => {
+    const stored = storedDraftRef.current;
+    if (!stored) { proceed(); return; }
+    const discardAndProceed = { text: t("draft.discard"), style: "destructive" as const, onPress: () => { void discardDraft("draft_discarded").then((cleared) => { if (cleared) proceed(); }); } };
+    if (stored === "unreadable") {
+      Alert.alert(t("draft.unreadableTitle"), t("draft.unreadableBody"), [{ text: t("common.cancel"), style: "cancel" }, discardAndProceed]);
+      return;
+    }
+    Alert.alert(t("draft.resumeTitle"), t("draft.resumeBody", { date: formatDate(stored.savedAt) }), [
+      { text: t("draft.resume"), onPress: () => { void resumeDraft(stored); } },
+      discardAndProceed,
+      { text: t("common.cancel"), style: "cancel" },
+    ]);
+  };
+
   const openCaptureChoice = (origin: CaptureOrigin) => {
-    setCaptureOrigin(origin);
-    setRoute("capture-choice");
+    withDraftCheck(() => {
+      setCaptureOrigin(origin);
+      setRoute("capture-choice");
+    });
   };
 
   const cancelCaptureChoice = () => {
@@ -375,6 +494,7 @@ function ResurfaceApp() {
       }
       deletePickedImageFromCache(captureImageUri);
       setCaptureImageUri(null);
+      void discardDraft();
       setSavedInsightId(insight.id);
       setSavedResurface(insight.status === "active");
       setFirstSave(wasFirst);
@@ -668,6 +788,8 @@ function ResurfaceApp() {
   if (!settings) return <Loading />;
 
   const leaveCapture = () => {
+    // Leaving keeps what was typed as a draft (offered again on Today and at the next capture).
+    void persistDraft();
     deletePickedImageFromCache(captureImageUri);
     setCaptureImageUri(null);
     if (captureOrigin === "onboarding") setRoute("onboarding");
@@ -710,13 +832,13 @@ function ResurfaceApp() {
   return <>
     <StatusBar style="dark" />
     {route === "onboarding" && <OnboardingScreen settings={settings} onRestore={chooseRestoreFile} onNext={() => {
-      if (settings.onboardingStep === 2) beginCapture("onboarding");
+      if (settings.onboardingStep === 2) withDraftCheck(() => beginCapture("onboarding"));
       else void updateSettings({ onboardingStep: settings.onboardingStep + 1 });
     }} />}
 
     {route === "capture-choice" && <CaptureChoiceScreen onChoose={chooseCapture} onCancel={cancelCaptureChoice} />}
 
-    {route === "capture" && <CaptureScreen
+    {route === "capture" && <CaptureScreen draftSaveFailed={draftSaveFailed}
       draft={{ content: captureContent, setContent: setCaptureContent, context: captureContext, setContext: setCaptureContext, source: captureSource, setSource: setCaptureSource, imageUri: captureImageUri, categoryIds: captureCategoryIds,
         resurface: captureResurface, setResurface: setCaptureResurface }}
       categories={categories}
@@ -737,7 +859,8 @@ function ResurfaceApp() {
     {route === "permission" && <PermissionScreen onAnswer={(ask) => { void finishPermission(ask); }} />}
 
     {route === "today" && <TodayScreen status={todayStatus} items={todayItems} index={todayIndex} insightCount={insightCount}
-      onSettings={openSettings} onRetry={() => { void goToday(); }} onCapture={() => beginCapture("today")}
+      draft={storedDraft} draftNotKept={draftSaveFailed} onResumeDraft={() => { if (storedDraft && storedDraft !== "unreadable") void resumeDraft(storedDraft); }} onDiscardDraft={confirmDiscardDraft}
+      onSettings={openSettings} onRetry={() => { void goToday(); }} onCapture={() => withDraftCheck(() => beginCapture("today"))}
       onCaptureChoice={() => openCaptureChoice("today")} onLibrary={goLibrary} onToday={() => { void goToday(); }}
       onReflect={() => startReflection(null)} onRevisit={startReflection} onNext={() => { void advanceToday(); }}
       onOpenDetail={(insightId) => { void openDetail(insightId, "today"); }} onUpcoming={() => { void goUpcoming(); }} />}

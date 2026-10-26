@@ -150,6 +150,60 @@ export function supersededPhotoFiles(fileNames: string[], insights: { id: string
   });
 }
 
+/**
+ * An unsaved capture kept across app restarts (SCRUM-59): text and details only, never a photo.
+ * It is not an insight, so it has no event and never counts in metrics or reminders.
+ */
+export type StoredDraft = {
+  content: string;
+  context: string;
+  source: string;
+  categoryIds: string[];
+  resurface: boolean;
+  /** Where the capture started, so leaving a resumed draft goes back there. */
+  origin: "today" | "library" | "onboarding";
+  /** A photo was attached; it isn't kept with the draft and has to be added again. */
+  hadPhoto: boolean;
+  savedAt: string;
+};
+
+/** Worth keeping: something the user typed or chose. A lone photo isn't kept, so it doesn't count. */
+export function draftHasContent(draft: Pick<StoredDraft, "content" | "context" | "source" | "categoryIds">): boolean {
+  return !!(draft.content.trim() || draft.context.trim() || draft.source.trim() || draft.categoryIds.length);
+}
+
+/** Format of a stored draft; a draft in any other version is unreadable, never rewritten. */
+export const DRAFT_VERSION = 1;
+const MAX_DRAFT_CATEGORIES = 100;
+
+/**
+ * A stored draft read back: "unreadable" for malformed JSON values or another format version, so the
+ * caller can offer to discard it rather than overwrite it; null when there is nothing worth keeping.
+ */
+export function parseStoredDraft(value: unknown): StoredDraft | "unreadable" | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "unreadable";
+  const draft = value as Record<string, unknown>;
+  if (draft.version !== DRAFT_VERSION) return "unreadable";
+  const strings = ["content", "context", "source"].every((key) => typeof draft[key] === "string");
+  const ids = Array.isArray(draft.categoryIds) && draft.categoryIds.every((id) => typeof id === "string");
+  const origin = draft.origin === "today" || draft.origin === "library" || draft.origin === "onboarding";
+  const flags = typeof draft.resurface === "boolean" && typeof draft.hadPhoto === "boolean";
+  const savedAt = typeof draft.savedAt === "string" && !Number.isNaN(Date.parse(draft.savedAt));
+  // A damaged draft is reported whole rather than resumed with fields silently dropped.
+  if (!strings || !ids || !origin || !flags || !savedAt) return "unreadable";
+  const parsed: StoredDraft = {
+    content: draft.content as string,
+    context: draft.context as string,
+    source: (draft.source as string).slice(0, MAX_SOURCE_LENGTH),
+    categoryIds: (draft.categoryIds as string[]).slice(0, MAX_DRAFT_CATEGORIES),
+    resurface: draft.resurface as boolean,
+    origin: draft.origin as StoredDraft["origin"],
+    hadPhoto: draft.hadPhoto as boolean,
+    savedAt: draft.savedAt as string,
+  };
+  return draftHasContent(parsed) ? parsed : null;
+}
+
 export function isValidInsight(content: string | null, hasImage: boolean): boolean {
   return Boolean(content?.trim()) || hasImage;
 }

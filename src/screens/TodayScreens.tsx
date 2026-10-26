@@ -5,12 +5,19 @@ import { formatDate, formatLongDay, t, weekdayName } from "../i18n";
 import type { UpcomingList } from "../store";
 import { palette } from "../theme";
 import { Action, Body, BottomNav, Eyebrow, Header, IconButton, Screen, Surface, Title } from "../ui";
-import { InsightCard, Thumbnail, TodaySkeleton } from "./components";
+import { DraftNotice, InsightCard, Thumbnail, TodaySkeleton } from "./components";
 import { screenStyles } from "./styles";
 import type { TodayStatus } from "./types";
 
-export function TodayScreen({ status, items, index, insightCount, onSettings, onRetry, onCapture, onCaptureChoice, onLibrary, onToday, onReflect, onRevisit, onNext, onOpenDetail, onUpcoming }: {
+export function TodayScreen({ status, items, index, insightCount, draft, draftNotKept, onResumeDraft, onDiscardDraft, onSettings, onRetry, onCapture, onCaptureChoice, onLibrary, onToday, onReflect, onRevisit, onNext, onOpenDetail, onUpcoming }: {
   status: TodayStatus;
+  /** A kept capture draft, shown above the cards so it isn't forgotten after a restart. */
+  draft: { savedAt: string } | "unreadable" | null;
+  /** The last write of that draft failed, so it exists only in memory. */
+  draftNotKept: boolean;
+  onResumeDraft: () => void;
+  /** Asks for confirmation first. */
+  onDiscardDraft: () => void;
   items: TodayItem[];
   index: number;
   insightCount: number;
@@ -36,6 +43,7 @@ export function TodayScreen({ status, items, index, insightCount, onSettings, on
     <ScrollView contentContainerStyle={screenStyles.todayContent}>
       <Eyebrow>{formatLongDay(new Date())}</Eyebrow>
       <Title>{t("today.title")}</Title>
+      {draft && <DraftNotice draft={draft} notKept={draftNotKept} onResume={onResumeDraft} onDiscard={onDiscardDraft} />}
       {status === "loading" ? <TodaySkeleton />
         : status === "error" ? <Surface style={screenStyles.emptyCard}><Ionicons name="cloud-offline-outline" size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{t("today.errorTitle")}</Text><Body muted>{t("today.errorBody")}</Body><View style={screenStyles.gap24}><Action label={t("common.tryAgain")} icon="refresh" onPress={onRetry} /></View><View style={screenStyles.gap12}><Action kind="ghost" label={t("today.openLibrary")} onPress={onLibrary} /></View></Surface>
         : items.length === 0 ? <Surface style={screenStyles.emptyCard}><Ionicons name={insightCount === 0 ? "bookmark-outline" : "sunny-outline"} size={36} color={palette.accentDark} /><Text maxFontSizeMultiplier={1.8} style={screenStyles.emptyTitle}>{insightCount === 0 ? t("today.emptyNewTitle") : t("today.emptyTitle")}</Text><Body muted>{insightCount === 0 ? t("today.emptyNewBody") : t("today.emptyBody")}</Body><View style={screenStyles.gap24}><Action label={insightCount === 0 ? t("today.saveFirst") : t("today.saveSomething")} onPress={onCapture} /></View></Surface>

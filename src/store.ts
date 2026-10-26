@@ -16,6 +16,10 @@ import {
   type ResurfaceEvent,
   type ResurfaceResponse,
   type Settings,
+  type StoredDraft,
+  draftHasContent,
+  parseStoredDraft,
+  DRAFT_VERSION,
   type TodayItem,
   normalizeQuietDays,
   matchesSearch,
@@ -27,6 +31,9 @@ import {
 } from "./storage-queries";
 
 type BindValue = string | number | null;
+
+/** Not a Settings key, so getSettings ignores it and backups (which export chosen settings) leave it out. */
+const DRAFT_KEY = "captureDraft";
 
 /** The subset of expo-sqlite's async API the lifecycle needs, so tests can supply node:sqlite. */
 export type StoreDatabase = {
@@ -480,6 +487,31 @@ export function createStore({ db, id, now }: StoreDependencies) {
     return { previous };
   }
 
+  /**
+   * The unsaved capture, kept in the encrypted database under a settings key that backups never
+   * export or restore. Categories deleted since it was saved are dropped.
+   */
+  async function getCaptureDraft(): Promise<StoredDraft | "unreadable" | null> {
+    const row = await db().getFirstAsync<{ value: string }>("SELECT value FROM settings WHERE key = ?", DRAFT_KEY);
+    if (!row) return null;
+    let draft: StoredDraft | "unreadable" | null;
+    try { draft = parseStoredDraft(JSON.parse(row.value)); } catch { draft = "unreadable"; }
+    if (!draft || draft === "unreadable") return draft;
+    const existing = new Set((await db().getAllAsync<{ id: string }>("SELECT id FROM categories")).map((category) => category.id));
+    return { ...draft, categoryIds: draft.categoryIds.filter((categoryId) => existing.has(categoryId)) };
+  }
+
+  /** Keeps the draft, or clears it when nothing in it is worth keeping. */
+  async function saveCaptureDraft(draft: Omit<StoredDraft, "savedAt">): Promise<void> {
+    if (!draftHasContent(draft)) { await clearCaptureDraft(); return; }
+    await db().runAsync("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      DRAFT_KEY, JSON.stringify({ version: DRAFT_VERSION, ...draft, savedAt: now().toISOString() }));
+  }
+
+  async function clearCaptureDraft(): Promise<void> {
+    await db().runAsync("DELETE FROM settings WHERE key = ?", DRAFT_KEY);
+  }
+
   /** Each insight with the photo it refers to, if any, for finding superseded photo files. */
   async function listPhotoReferences(): Promise<{ id: string; imagePath: string | null }[]> {
     return db().getAllAsync<{ id: string; imagePath: string | null }>("SELECT id, imagePath FROM insights");
@@ -625,7 +657,7 @@ export function createStore({ db, id, now }: StoreDependencies) {
     listCategories, createCategory, renameCategory, deleteCategory, setInsightCategories, setFavorite,
     track, getSettings, saveSettings, insertInsight, countInsights, listInsights, getInsight, getEvent,
     getDetail, selectToday, listUpcoming, markShown, markOpened, markCompleted, respondToEvent, setReflectionNote, setInsightStatus, snoozeInsight,
-    editInsight, setInsightImage, listPhotoReferences, deleteInsightRow, markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics,
+    editInsight, setInsightImage, listPhotoReferences, getCaptureDraft, saveCaptureDraft, clearCaptureDraft, deleteInsightRow, markValueFeedbackAsked, saveValueFeedback, getShownCount, getBetaMetrics,
     notificationCandidates, clearFutureNotificationPlans, setNotificationPlan,
   };
 }

@@ -35,8 +35,10 @@ export type CaptureDraft = {
   resurface: boolean; setResurface: (value: boolean) => void;
 };
 
-export function CaptureScreen({ draft, categories, onToggleCategory, onCreateCategory, onRemovePhoto, onPickImage, onSave, onBack, busy, saveStage, slowSeconds }: {
+export function CaptureScreen({ draft, draftSaveFailed, categories, onToggleCategory, onCreateCategory, onRemovePhoto, onPickImage, onSave, onBack, busy, saveStage, slowSeconds }: {
   draft: CaptureDraft;
+  /** Keeping the draft on the device failed; what is on screen is unaffected. */
+  draftSaveFailed: boolean;
   categories: Category[];
   onToggleCategory: (categoryId: string) => void;
   onCreateCategory: (name: string) => Promise<boolean>;
@@ -66,6 +68,7 @@ export function CaptureScreen({ draft, categories, onToggleCategory, onCreateCat
     <View style={[screenStyles.row, screenStyles.gap24]}><View style={screenStyles.flex}><Action kind="secondary" icon="camera-outline" label={t("choice.takePhoto")} onPress={() => onPickImage("camera")} /></View><View style={screenStyles.flex}><Action kind="secondary" icon="images-outline" label={t("choice.choosePhoto")} onPress={() => onPickImage("library")} /></View></View>
     <View style={screenStyles.gap24}><Action label={saveStage === "preparing" ? t("capture.preparingPhoto") : saveStage === "encrypting" ? t("capture.encryptingPhoto") : busy ? t("capture.saving") : t("capture.save")} icon="bookmark-outline" disabled={busy || !isValidInsight(draft.content, !!draft.imageUri)} onPress={onSave} /></View>
     {saveStage && saveStage !== "saving" && slowSeconds >= 3 && <Text accessibilityLiveRegion="polite" style={screenStyles.slowNote}>{t("capture.photoSlow", { seconds: slowSeconds })}</Text>}
+    {draftSaveFailed && <Text accessibilityLiveRegion="polite" style={screenStyles.backupHint}>{t("draft.saveFailed")}</Text>}
     <Text style={screenStyles.privacyNote}>{t("capture.privacy")}</Text>
   </Screen>;
 }

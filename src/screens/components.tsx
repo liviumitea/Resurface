@@ -120,6 +120,18 @@ export function CategoryChips({ categories, selected, onToggle, onCreate }: {
   </View>;
 }
 
+/** A kept capture draft, offered back after a restart: resume it, or discard it for good. */
+export function DraftNotice({ draft, notKept = false, onResume, onDiscard }: { draft: { savedAt: string } | "unreadable"; notKept?: boolean; onResume: () => void; onDiscard: () => void }) {
+  const unreadable = draft === "unreadable";
+  return <Surface style={[screenStyles.draftNotice]}>
+    <Text maxFontSizeMultiplier={1.8} accessibilityRole="header" style={screenStyles.switchTitle}>{t(unreadable ? "draft.unreadableTitle" : "draft.title")}</Text>
+    <Text style={screenStyles.switchDescription}>{unreadable ? t("draft.unreadableBody") : t("draft.body", { date: formatDate(draft.savedAt) })}</Text>
+    {!unreadable && notKept && <Text accessibilityLiveRegion="polite" style={screenStyles.backupHint}>{t("draft.notKept")}</Text>}
+    {!unreadable && <View style={screenStyles.gap12}><Action kind="secondary" label={t("draft.resume")} icon="create-outline" onPress={onResume} /></View>}
+    <View style={screenStyles.gap12}><Action kind="ghost" label={t("draft.discard")} onPress={onDiscard} /></View>
+  </Surface>;
+}
+
 export function Loading({ message }: { message?: string }) {
   return <Screen scroll={false}><View style={screenStyles.center}><View style={screenStyles.loadingMark}><Ionicons name="sparkles" size={34} color={palette.accentDark} /></View><Text style={screenStyles.loadingText}>{message ?? t("common.loadingApp")}</Text></View></Screen>;
 }

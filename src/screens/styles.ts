@@ -58,6 +58,7 @@ export const screenStyles = StyleSheet.create({
   viewer: { flex: 1, backgroundColor: "#000000" }, viewerContent: { flexGrow: 1, alignItems: "center", justifyContent: "center" },
   viewerMessage: { color: "#FFFFFF", fontSize: 15, textAlign: "center", padding: 24 },
   viewerClose: { position: "absolute", right: 16 },
+  draftNotice: { marginBottom: 18, padding: 18 },
   photoNote: { color: palette.muted, fontSize: 13, lineHeight: 19, marginTop: 8 },
   modalBackdrop: { flex: 1, backgroundColor: "#14221ACC", justifyContent: "center", padding: 24 }, feedbackBox: { padding: 24 }, feedbackTitle: { color: palette.ink, fontSize: 26, lineHeight: 33, fontWeight: "700", marginBottom: 10 },
 });
